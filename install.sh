@@ -47,12 +47,12 @@ esac
 # Installing on linux with apt
 if [ $machine == "Linux" ]; then
     DOT_DIR=$(dirname $(realpath $0))
-    sudo apt-get update -y
-    [ $zsh == true ] && sudo apt-get install -y zsh
-    [ $tmux == true ] && sudo apt-get install -y tmux
+    sudo pacman -Syu
+    [ $zsh == true ] && sudo pacman -S zsh
+    [ $tmux == true ] && sudo pacman -S tmux
     
     if [ $extras == true ]; then
-        sudo apt-get install -y ripgrep
+        sudo pacman -S ripgrep
 
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
         yes | brew install dust jless
