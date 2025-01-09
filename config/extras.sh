@@ -16,6 +16,11 @@ setopt always_to_end
 setopt list_ambiguous
 export HISTSIZE=100000 # big big history
 export HISTFILESIZE=100000 # big big history
+
+HISTCONTROL=ignoreboth
+# dont put useless commands into bashrc
+HISTIGNORE='?:??:clear:cd ?:cd ??'
+
 unsetopt hup
 unsetopt list_beep
 skip_global_compinit=1
