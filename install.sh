@@ -2,7 +2,7 @@
 set -euo pipefail
 USAGE=$(cat <<-END
     Usage: ./install.sh [OPTION]
-    Install dotfile dependencies on mac or linux
+    Install dotfile dependencies on mac, arch linux, or other linux distributions
 
     OPTIONS:
         --tmux       install tmux
@@ -10,7 +10,7 @@ USAGE=$(cat <<-END
         --extras     install extra dependencies
 
     If OPTIONS are passed they will be installed
-    with apt if on linux or brew if on OSX
+    with pacman if on arch, apt if on linux, or brew if on OSX
 END
 )
 
@@ -39,20 +39,48 @@ done
 
 operating_system="$(uname -s)"
 case "${operating_system}" in
-    Linux*)     machine=Linux;;
+    Linux*)     
+        if [ -f "/etc/arch-release" ]; then
+            machine=Arch
+        else
+            machine=Linux
+        fi
+        ;;
     Darwin*)    machine=Mac;;
     *)          machine="UNKNOWN:${operating_system}"
 esac
 
-# Installing on linux with apt
-if [ $machine == "Linux" ]; then
+# Installing on Arch Linux with pacman
+if [ $machine == "Arch" ]; then
     DOT_DIR=$(dirname $(realpath $0))
     sudo pacman -Syu
     [ $zsh == true ] && sudo pacman -S zsh
     [ $tmux == true ] && sudo pacman -S tmux
     
     if [ $extras == true ]; then
-        sudo pacman -S ripgrep
+        sudo pacman -S ripgrep jless rustup
+        # Check if yay is installed, if not install it
+        if ! command -v yay &> /dev/null; then
+            echo "Installing yay..."
+            sudo pacman -S --needed git base-devel
+            git clone https://aur.archlinux.org/yay.git
+            cd yay
+            makepkg -si
+            cd ..
+            rm -rf yay
+        fi
+        yay -S dust peco code2prompt
+    fi
+
+# Installing on other Linux distributions with apt
+elif [ $machine == "Linux" ]; then
+    DOT_DIR=$(dirname $(realpath $0))
+    sudo apt-get update -y
+    [ $zsh == true ] && sudo apt-get install -y zsh
+    [ $tmux == true ] && sudo apt-get install -y tmux
+    
+    if [ $extras == true ]; then
+        sudo apt-get install -y ripgrep
 
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
         yes | brew install dust jless
@@ -119,4 +147,3 @@ else
     echo " --------- INSTALLED SUCCESSFULLY ✅ ----------- "
     echo " --------- NOW RUN ./deploy.sh [OPTION] -------- "
 fi
-
