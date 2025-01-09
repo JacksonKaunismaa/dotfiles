@@ -2,7 +2,6 @@
 # personal
 # -------------------------------------------------------------------
 
-alias cdg="cd ~/git"
 alias zrc="cd $DOT_DIR/zsh"
 alias dot="cd $DOT_DIR"
 alias jp="jupyter lab"
@@ -69,7 +68,6 @@ alias 7='cd -7'
 alias 8='cd -8'
 alias 9='cd -9'
 
-
 #-------------------------------------------------------------
 # git
 #-------------------------------------------------------------
@@ -80,7 +78,7 @@ alias ga="git add"
 alias gaa="git add ."
 alias gau="git add -u"
 alias gc="git commit -m"
-alias gp="git push"
+alias gpu="git push"
 alias gpf="git push -f"
 alias gpo='git push origin $(git_current_branch)'
 alias gpp='git push --set-upstream origin $(git_current_branch)'
@@ -89,7 +87,7 @@ alias gg='git gui'
 alias glog='git log --oneline --all --graph --decorate'
 
 alias gf="git fetch"
-alias gl="git pull"
+alias gpl="git pull"
 
 alias grb="git rebase"
 alias grbm="git rebase master"
