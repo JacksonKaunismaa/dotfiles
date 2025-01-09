@@ -13,6 +13,7 @@ ZSH=$HOME/.oh-my-zsh
 
 plugins=(zsh-autosuggestions zsh-syntax-highlighting zsh-completions zsh-history-substring-search)
 
+
 source $ZSH/oh-my-zsh.sh
 source $CONFIG_DIR/aliases.sh
 source $CONFIG_DIR/p10k.zsh
@@ -20,7 +21,6 @@ source $CONFIG_DIR/extras.sh
 source $CONFIG_DIR/key_bindings.sh
 
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
-. "$HOME/.cargo/env" 
 
 add_to_path "${DOT_DIR}/custom_bins"
 
@@ -53,4 +53,3 @@ export ASK_SH_OPENAI_API_KEY=$(cat $HOME/.openai_api_key)
 export ASK_SH_OPENAI_MODEL=gpt-4o-mini
 eval "$(ask-sh --init)"
 
-cat $CONFIG_DIR/start.txt
