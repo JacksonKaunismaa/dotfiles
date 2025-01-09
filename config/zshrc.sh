@@ -53,6 +53,8 @@ export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 export EDITOR=vim
 export GREP_COLORS="ms=01;31:mc=01;31:sl=:cx=:fn=36:ln=32:bn=32:se=36"
 
+ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=5'
+
 export ASK_SH_OPENAI_API_KEY=$(cat $HOME/.openai_api_key)
 export ASK_SH_OPENAI_MODEL=gpt-4o-mini
 eval "$(ask-sh --init)"
