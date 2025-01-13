@@ -84,6 +84,7 @@ alias gpo='git push origin $(git_current_branch)'
 alias gpp='git push --set-upstream origin $(git_current_branch)'
 
 alias gg='git gui'
+alias gl='git log'
 alias glog='git log --oneline --all --graph --decorate'
 
 alias gf="git fetch"
