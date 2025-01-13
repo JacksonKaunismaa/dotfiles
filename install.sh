@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 USAGE=$(cat <<-END
     Usage: ./install.sh [OPTION]
     Install dotfile dependencies on mac, arch linux, or other linux distributions
