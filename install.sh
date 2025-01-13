@@ -95,6 +95,7 @@ elif [ $machine == "Linux" ]; then
     if [ $extras == true ]; then
         maybe_sudo apt-get install -y ripgrep
 
+				echo "Installing homebrew..."
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
 				echo "Homebrew installed, adding to path..."
 				eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
