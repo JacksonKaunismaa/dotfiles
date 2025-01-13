@@ -96,9 +96,11 @@ elif [ $machine == "Linux" ]; then
         maybe_sudo apt-get install -y ripgrep
 
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
-        yes | maybe_sudo brew install dust jless
+				eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+				yes | maybe_sudo brew install dust jless
 
         yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+				echo "Sourcing rust env..."
         . "$HOME/.cargo/env" 
         yes | cargo install code2prompt
         yes | maybe_sudo brew install peco
@@ -125,6 +127,8 @@ elif [ $machine == "Mac" ]; then
     maybe_sudo defaults write -g com.apple.mouse.scaling 5.0
     maybe_sudo defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false
 fi
+
+echo "Done installing basics."
 
 # Setting up oh my zsh and oh my zsh plugins
 ZSH=~/.oh-my-zsh
