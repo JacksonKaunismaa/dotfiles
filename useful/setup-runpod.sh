@@ -95,5 +95,5 @@ if get_yes_no "Would you like to run the stress test?"; then
     echo "Beginning stress test..."
     time python3 ~/useful/stress-test.py
 fi
-
+echo "zsh" >> ~/.bashrc
 zsh
