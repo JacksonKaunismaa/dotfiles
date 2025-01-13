@@ -18,3 +18,5 @@ altscreen on
 
 # make it so we can scroll up in the window (also breaks vim shift+arrow)
 termcapinfo xterm* ti@:te@
+defshell /bin/zsh
+shell /bin/zsh
