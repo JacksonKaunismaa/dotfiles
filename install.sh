@@ -8,7 +8,7 @@ USAGE=$(cat <<-END
         --tmux       install tmux
         --zsh        install zsh
         --extras     install extra dependencies
-        --is-root    run all commands with sudo
+        --is-root    run commands without sudo
 
     If OPTIONS are passed they will be installed
     with pacman if on arch, apt if on linux, or brew if on OSX
@@ -43,7 +43,7 @@ done
 
 # Function to conditionally prepend sudo
 maybe_sudo() {
-    if [ "$is_root" = true ]; then
+    if [ "$is_root" = false ]; then
         sudo "$@"
     else
         "$@"

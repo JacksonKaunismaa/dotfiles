@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Running assuming that cwd is ~/dotfiles"
-./install.sh --tmux --zsh --extras --is-root
+./install.sh --tmux --zsh --extras
 ./deploy.sh
 
 ssh-keygen -t ed25519
