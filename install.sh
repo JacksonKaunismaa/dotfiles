@@ -96,9 +96,12 @@ elif [ $machine == "Linux" ]; then
         maybe_sudo apt-get install -y ripgrep
 
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
+				echo "Homebrew installed, adding to path..."
 				eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+				echo "Brew installing dust and jless..."
 				yes | maybe_sudo brew install dust jless
 
+				echo "Installing rust..."
         yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 				echo "Sourcing rust env..."
         . "$HOME/.cargo/env" 
