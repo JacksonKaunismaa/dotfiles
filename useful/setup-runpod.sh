@@ -3,8 +3,13 @@
 echo "Running assuming that cwd is ~/dotfiles"
 ./install.sh --tmux --zsh --extras --is-root
 ./deploy.sh
+echo "Installing uv..."
+curl -LsSf https://astral.sh/uv/install.sh | sh
 echo "Finished deploying"
 apt-get install vim
+apt-get install screen
+
+cp useful/.screenrc ~
 
 ssh-keygen -t ed25519
 cat ~/.ssh/id_ed25519.pub
