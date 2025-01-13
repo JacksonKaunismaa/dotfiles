@@ -49,4 +49,3 @@ echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
     "source $DOT_DIR/config/aliases_speechmatics.sh" >> $HOME/.zshrc
 
 echo "Finished deploying"
-zsh
