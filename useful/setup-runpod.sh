@@ -43,3 +43,4 @@ echo "Setup complete!"
 echo "Beginning stress test..."
 
 time python3 ~/useful/stress-test.py
+zsh
