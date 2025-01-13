@@ -1,0 +1,20 @@
+# status bar
+# truecolor on
+hardstatus off
+hardstatus alwayslastline
+hardstatus string '%{= KW} %H %{= Kw}|%{-} %-Lw%{= bW}%n%f %t%{-}%+Lw %=%C%a %Y-%M-%d'
+
+# Set default screen window to 1 (easier tabbing)
+bind c screen 1
+bind ^c screen 1
+bind 0 select 10                                                            
+screen 1
+
+# set escape key to Ctrl+T
+escape ^Tt
+
+# make it so vim window disappears upon closing
+altscreen on
+
+# make it so we can scroll up in the window (also breaks vim shift+arrow)
+termcapinfo xterm* ti@:te@

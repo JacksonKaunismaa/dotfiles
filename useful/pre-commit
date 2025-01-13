@@ -1,0 +1,7 @@
+for file in $(git diff --name-only --cached | grep ".ipynb") 
+do
+	mv "$file" "$file.bkp"
+	jupyter nbconvert --clear-output --to notebook --output=$file $file.bkp
+	git add "$file"
+	mv "$file.bkp" "$file"
+done
