@@ -8,6 +8,7 @@ USAGE=$(cat <<-END
         --tmux       install tmux
         --zsh        install zsh
         --extras     install extra dependencies
+        --is-root    run all commands with sudo
 
     If OPTIONS are passed they will be installed
     with pacman if on arch, apt if on linux, or brew if on OSX
@@ -18,6 +19,7 @@ zsh=false
 tmux=false
 extras=false
 force=false
+is_root=false
 while (( "$#" )); do
     case "$1" in
         -h|--help)
@@ -30,12 +32,23 @@ while (( "$#" )); do
             extras=true && shift ;;
         --force)
             force=true && shift ;;
+        --is-root)
+            is_root=true && shift ;;
         --) # end argument parsing
             shift && break ;;
         -*|--*=) # unsupported flags
             echo "Error: Unsupported flag $1" >&2 && exit 1 ;;
     esac
 done
+
+# Function to conditionally prepend sudo
+maybe_sudo() {
+    if [ "$is_root" = true ]; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
 
 operating_system="$(uname -s)"
 case "${operating_system}" in
@@ -53,19 +66,19 @@ esac
 # Installing on Arch Linux with pacman
 if [ $machine == "Arch" ]; then
     DOT_DIR=$(dirname $(realpath $0))
-    sudo pacman -Syu
-    [ $zsh == true ] && sudo pacman -S zsh
-    [ $tmux == true ] && sudo pacman -S tmux
+    maybe_sudo pacman -Syu
+    [ $zsh == true ] && maybe_sudo pacman -S zsh
+    [ $tmux == true ] && maybe_sudo pacman -S tmux
     
     if [ $extras == true ]; then
-        sudo pacman -S ripgrep jless rustup
+        maybe_sudo pacman -S ripgrep jless rustup
         # Check if yay is installed, if not install it
         if ! command -v yay &> /dev/null; then
             echo "Installing yay..."
-            sudo pacman -S --needed git base-devel
+            maybe_sudo pacman -S --needed git base-devel
             git clone https://aur.archlinux.org/yay.git
             cd yay
-            makepkg -si
+            maybe_sudo makepkg -si
             cd ..
             rm -rf yay
         fi
@@ -75,42 +88,42 @@ if [ $machine == "Arch" ]; then
 # Installing on other Linux distributions with apt
 elif [ $machine == "Linux" ]; then
     DOT_DIR=$(dirname $(realpath $0))
-    sudo apt-get update -y
-    [ $zsh == true ] && sudo apt-get install -y zsh
-    [ $tmux == true ] && sudo apt-get install -y tmux
+    maybe_sudo apt-get update -y
+    [ $zsh == true ] && maybe_sudo apt-get install -y zsh
+    [ $tmux == true ] && maybe_sudo apt-get install -y tmux
     
     if [ $extras == true ]; then
-        sudo apt-get install -y ripgrep
+        maybe_sudo apt-get install -y ripgrep
 
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
-        yes | brew install dust jless
+        yes | maybe_sudo brew install dust jless
 
         yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         . "$HOME/.cargo/env" 
         yes | cargo install code2prompt
-        yes | brew install peco
+        yes | maybe_sudo brew install peco
     fi
 
 # Installing on mac with homebrew
 elif [ $machine == "Mac" ]; then
-    yes | brew install coreutils  # Mac won't have realpath before coreutils installed
+    yes | maybe_sudo brew install coreutils  # Mac won't have realpath before coreutils installed
 
     if [ $extras == true ]; then
-        yes | brew install ripgrep dust jless
+        yes | maybe_sudo brew install ripgrep dust jless
 
         yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         . "$HOME/.cargo/env" 
         yes | cargo install code2prompt
-        yes | brew install peco
+        yes | maybe_sudo brew install peco
     fi
 
     DOT_DIR=$(dirname $(realpath $0))
-    [ $zsh == true ] && yes | brew install zsh
-    [ $tmux == true ] && yes | brew install tmux
-    defaults write -g InitialKeyRepeat -int 10 # normal minimum is 15 (225 ms)
-    defaults write -g KeyRepeat -int 1 # normal minimum is 2 (30 ms)
-    defaults write -g com.apple.mouse.scaling 5.0
-    defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false
+    [ $zsh == true ] && yes | maybe_sudo brew install zsh
+    [ $tmux == true ] && yes | maybe_sudo brew install tmux
+    maybe_sudo defaults write -g InitialKeyRepeat -int 10 # normal minimum is 15 (225 ms)
+    maybe_sudo defaults write -g KeyRepeat -int 1 # normal minimum is 2 (30 ms)
+    maybe_sudo defaults write -g com.apple.mouse.scaling 5.0
+    maybe_sudo defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false
 fi
 
 # Setting up oh my zsh and oh my zsh plugins
@@ -140,7 +153,7 @@ else
     git clone https://github.com/jimeh/tmux-themepack.git ~/.tmux-themepack
 
     git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
-    ~/.fzf/install
+    maybe_sudo ~/.fzf/install
 
     NO_ASK_OPENAI_API_KEY=1 zsh -c "$(curl -fsSL https://raw.githubusercontent.com/hmirin/ask.sh/main/install.sh)"
 
