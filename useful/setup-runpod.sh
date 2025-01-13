@@ -3,6 +3,7 @@
 echo "Running assuming that cwd is ~/dotfiles"
 ./install.sh --tmux --zsh --extras --is-root
 ./deploy.sh
+echo "Finished deploying"
 apt-get install vim
 
 ssh-keygen -t ed25519

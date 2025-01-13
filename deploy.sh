@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 USAGE=$(cat <<-END
     Usage: ./deploy.sh [OPTIONS], eg. ./deploy.sh --local --vim
     Creates ~/.zshrc and ~/.tmux.conf with location
