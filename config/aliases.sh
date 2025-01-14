@@ -97,6 +97,7 @@ alias grbs="git rebase --skip"
 alias grba="git rebase --abort"
 
 alias gd="git diff"
+alias gdc="git diff --cached"
 alias gdt="git difftool"
 alias gs="git status"
 
