@@ -15,7 +15,7 @@ ssh-keygen -t ed25519
 cat ~/.ssh/id_ed25519.pub
 
 git config --global user.name "JacksonKaunismaa"
-git config --global user.email "jackkaunis@gmail.com"
+git config --global user.email "jackkaunis@protonmail.com"
 
 # Function to validate yes/no input
 get_yes_no() {
