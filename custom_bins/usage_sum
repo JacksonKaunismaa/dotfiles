@@ -1,0 +1,3 @@
+#!/bin/bash
+
+ps -eaxu | grep -i $1 | awk '{tot+=$4} END {print tot}'

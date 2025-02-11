@@ -36,7 +36,10 @@ echo "deploying on $LOC machine..."
 # Tmux setup
 echo "source $DOT_DIR/config/tmux.conf" > $HOME/.tmux.conf
 
-# Vimrc
+# screen setup
+cp $DOT_DIR/screenrc $HOME/.screenrc
+
+
 if [[ $VIM == "true" ]]; then
     echo "deploying .vimrc"
     echo "source $DOT_DIR/config/vimrc" > $HOME/.vimrc
