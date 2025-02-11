@@ -51,4 +51,32 @@ echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
 [ $LOC = 'remote' ] &&  echo \
     "source $DOT_DIR/config/aliases_speechmatics.sh" >> $HOME/.zshrc
 
+
+ssh-keygen -t ed25519
+cat ~/.ssh/id_ed25519.pub
+
+git config --global user.name "JacksonKaunismaa"
+git config --global user.email "jackkaunis@protonmail.com"
+
+# Function to validate yes/no input
+get_yes_no() {
+    while true; do
+        read -p "$1 (y/n): " yn
+        case $yn in
+            [Yy]* ) return 0;;
+            [Nn]* ) return 1;;
+            * ) echo "Please answer y or n.";;
+        esac
+    done
+}
+
+# Ask about SSH key setup
+if get_yes_no "Would you like to add a GitHub SSH key?"; then
+    echo "Please add github ssh key at https://github.com/settings/ssh/new"
+    read -p "Press Enter once you have added your key..."
+		git config --global user.signingkey ~/.ssh/id_ed25519.pub
+		git config --global gpg.format ssh
+fi
+
+
 echo "Finished deploying"

@@ -11,12 +11,6 @@ apt-get install screen
 
 cp useful/.screenrc ~
 
-ssh-keygen -t ed25519
-cat ~/.ssh/id_ed25519.pub
-
-git config --global user.name "JacksonKaunismaa"
-git config --global user.email "jackkaunis@protonmail.com"
-
 # Function to validate yes/no input
 get_yes_no() {
     while true; do
@@ -29,11 +23,6 @@ get_yes_no() {
     done
 }
 
-# Ask about SSH key setup
-if get_yes_no "Would you like to add a GitHub SSH key?"; then
-    echo "Please add github ssh key at https://github.com/settings/ssh/new"
-    read -p "Press Enter once you have added your key..."
-fi
 
 # Ask about repository cloning
 if get_yes_no "Would you like to clone a repository?"; then
