@@ -1,0 +1,85 @@
+#!/bin/bash
+
+show_help() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS] directory1 [directory2 ...]
+
+Calculate disk usage for specified directories, ignoring symlinks.
+Output format matches 'du' style with aligned filenames.
+
+Options:
+    -h, --help     Show this help message and exit
+
+Examples:
+    $(basename "$0") /home/user/docs
+    $(basename "$0") /var/log /etc /home
+EOF
+}
+
+# Process command line options
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option: $1" >&2
+            show_help
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+    shift
+done
+
+# Check if arguments were provided
+if [ $# -eq 0 ]; then
+    show_help
+    exit 1
+fi
+
+# Initialize total
+total=0
+
+# Function to format size in K (like du)
+format_du_size() {
+    local size=$1
+    # Convert to KB (du's default unit)
+    size=$(echo "scale=0; $size / 1024" | bc)
+    echo $size
+}
+
+# First pass to determine the maximum width needed for size column
+max_width=0
+for dir in "$@"; do
+    if [ ! -e "$dir" ]; then
+        echo "Error: $dir does not exist" >&2
+        continue
+    fi
+    
+    # Calculate size, only including regular files (-type f), no symlinks
+    size=$(find "$dir" -type f -exec du -k {} + | awk '{sum += $1} END {print sum}')
+    width=${#size}
+    if [ $width -gt $max_width ]; then
+        max_width=$width
+    fi
+    total=$(echo "$total + $size" | bc)
+done
+
+# Second pass to print with proper alignment
+for dir in "$@"; do
+    if [ ! -e "$dir" ]; then
+        continue
+    fi
+    
+    size=$(find "$dir" -type f -exec du -k {} + | awk '{sum += $1} END {print sum}')
+    printf "%${max_width}d\t%s\n" "$size" "$dir"
+done
+
+# Print total if more than one argument
+if [ $# -gt 1 ]; then
+    printf "%${max_width}d\ttotal\n" "$total"
+fi

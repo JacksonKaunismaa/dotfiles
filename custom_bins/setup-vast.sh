@@ -20,7 +20,7 @@ git submodule update --init
 
 # If a requirements.txt file exists, install the Python dependencies
 if [ -f requirements.txt ]; then
-    pip3 install -r requirements.txt
+    uv pip3 install -r requirements.txt
 fi
 
 echo "Setup complete!"

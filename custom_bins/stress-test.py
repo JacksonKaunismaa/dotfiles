@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import torch
 import time
+from tqdm import tqdm
 
 # Set device to GPU (CUDA)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -12,7 +13,7 @@ def stress_test_gpu(size, its):
     b = torch.randn(size, size, device=device)
 
     # Perform matrix multiplication in a loop
-    for i in range(its):
+    for i in tqdm(range(its)):
         # Measure start time
 
         # Matrix multiplication
@@ -23,8 +24,8 @@ def stress_test_gpu(size, its):
 
 if __name__ == "__main__":
     # Set the size of the matrix (increase for more stress)
-    matrix_size = 32768  # Adjust size as needed
-    iterations = 200
+    matrix_size = 8192  # Adjust size as needed
+    iterations = 50
 
     print(f"Starting GPU stress test with matrix size: {matrix_size}")
     stress_test_gpu(matrix_size, iterations)

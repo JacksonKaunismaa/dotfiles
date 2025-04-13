@@ -9,8 +9,6 @@ echo "Finished deploying"
 apt-get install vim
 apt-get install screen
 
-cp useful/.screenrc ~
-
 # Function to validate yes/no input
 get_yes_no() {
     while true; do
@@ -73,7 +71,10 @@ if get_yes_no "Would you like to clone a repository?"; then
     # Python dependencies
     if [ -f requirements.txt ]; then
         if get_yes_no "requirements.txt found. Would you like to install Python dependencies?"; then
-            pip3 install -r requirements.txt
+            uv venv --python 3.11
+						source .venv
+						uv pip install -r requirements.txt
+						uv pip install -e .
         fi
     fi
 fi
@@ -82,7 +83,7 @@ echo "Setup complete!"
 
 if get_yes_no "Would you like to run the stress test?"; then
     echo "Beginning stress test..."
-    time python3 ~/useful/stress-test.py
+    time python3 $DOT_DIR/cutom_bins/stress-test.py
 fi
 echo "zsh" >> ~/.bashrc
 zsh
