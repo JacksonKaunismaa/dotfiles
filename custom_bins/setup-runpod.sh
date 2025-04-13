@@ -83,7 +83,7 @@ echo "Setup complete!"
 
 if get_yes_no "Would you like to run the stress test?"; then
     echo "Beginning stress test..."
-    time python3 $DOT_DIR/cutom_bins/stress-test.py
+    time python3 $DOT_DIR/custom_bins/stress-test.py
 fi
 echo "zsh" >> ~/.bashrc
 zsh
