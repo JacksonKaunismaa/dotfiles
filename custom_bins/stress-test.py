@@ -4,7 +4,7 @@ import time
 from tqdm import tqdm
 
 # Set device to GPU (CUDA)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda")
 
 # Function to perform matrix multiplication to stress the GPU
 def stress_test_gpu(size, its):
