@@ -140,7 +140,7 @@ if [ -d $ZSH ] && [ "$force" = "false" ]; then
 else
     echo " --------- INSTALLING DEPENDENCIES ⏳ ----------- "
     rm -rf $ZSH
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    yes | sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
 
     git clone https://github.com/romkatv/powerlevel10k.git \
         ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/themes/powerlevel10k

@@ -4,10 +4,10 @@ echo "Running assuming that cwd is ~/dotfiles"
 ./install.sh --tmux --zsh --extras --is-root
 ./deploy.sh
 echo "Installing uv..."
-curl -LsSf https://astral.sh/uv/install.sh | sh
+yes | curl -LsSf https://astral.sh/uv/install.sh | sh
 echo "Finished deploying"
-apt-get install vim
-apt-get install screen
+apt-get install -y vim
+apt-get install -y screen
 
 # Function to validate yes/no input
 get_yes_no() {
