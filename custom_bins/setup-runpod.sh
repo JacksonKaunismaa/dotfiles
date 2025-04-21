@@ -14,8 +14,8 @@ get_yes_no() {
     while true; do
         read -p "$1 (y/n): " yn
         case $yn in
-            [Yy]* ) return 0;;
-            [Nn]* ) return 1;;
+            [Yy]* ) return 1;;
+            [Nn]* ) return 0;;
             * ) echo "Please answer y or n.";;
         esac
     done
@@ -23,7 +23,7 @@ get_yes_no() {
 
 
 # Ask about repository cloning
-if get_yes_no "Would you like to clone a repository?"; then
+if get_yes_no "Skip cloning a repository?"; then
     read -p "Input repo to clone: " repo_url
     
     # Ask where to clone
@@ -64,13 +64,13 @@ if get_yes_no "Would you like to clone a repository?"; then
     fi
 
     # Initialize and update submodules
-    if get_yes_no "Would you like to initialize and update submodules?"; then
+    if get_yes_no "Skip initializing and updating submodules?"; then
         git submodule update --init
     fi
 
     # Python dependencies
     if [ -f requirements.txt ]; then
-        if get_yes_no "requirements.txt found. Would you like to install Python dependencies?"; then
+        if get_yes_no "requirements.txt found. Skip installing Python dependencies?"; then
             uv venv --python 3.11
 						source .venv
 						uv pip install -r requirements.txt
@@ -86,4 +86,4 @@ echo "Setup complete!"
 #    time python3 $DOT_DIR/custom_bins/stress-test.py
 #fi
 echo "zsh" >> ~/.bashrc
-zsh
+# zsh
