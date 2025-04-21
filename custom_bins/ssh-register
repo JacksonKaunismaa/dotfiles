@@ -35,7 +35,7 @@ def generate_config_entry(ssh_info):
     User {ssh_info['user']}
     Port {ssh_info['port']}
     IdentityFile ~/.ssh/id_ed25519.1
-    # RemoteCommand none
+    RemoteCommand none
     ForwardAgent yes
 """
     return config_template
