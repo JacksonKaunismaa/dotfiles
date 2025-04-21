@@ -49,6 +49,22 @@ if [ -d "$FNM_PATH" ]; then
   eval "`fnm env`"
 fi
 
+# only in interactive shells …
+if [[ $- == *i* ]]; then
+
+  # … and only when NOT in an SSH‐forwarded session …
+  if [[ -z "$SSH_CONNECTION" ]]; then
+
+    # … and only if systemd has actually created the socket locally …
+    SOCKET="$XDG_RUNTIME_DIR/ssh-agent.socket"
+    if [[ -S "$SOCKET" ]]; then
+      export SSH_AUTH_SOCK="$SOCKET"
+    fi
+
+  fi
+fi
+
+
 export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 export EDITOR=vim
 export GREP_COLORS="ms=01;31:mc=01;31:sl=:cx=:fn=36:ln=32:bn=32:se=36"

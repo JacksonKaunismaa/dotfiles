@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+import re
+import tkinter as tk
+from pathlib import Path
+import argparse
+
+def get_clipboard_content():
+    root = tk.Tk()
+    root.withdraw()  # Hide the tkinter window
+    try:
+        return root.clipboard_get()
+    except tk.TclError:
+        return None
+    finally:
+        root.destroy()
+
+def parse_ssh_command(command):
+    # Pattern to match SSH command components
+    pattern = r'ssh\s+([^@]+)@([^\s]+)\s+-p\s+(\d+)'
+    match = re.match(pattern, command)
+    
+    if not match:
+        raise ValueError("Invalid SSH command format")
+    
+    user, host, port = match.groups()
+    return {
+        'user': user,
+        'host': host,
+        'port': port
+    }
+
+def generate_config_entry(ssh_info):
+    config_template = f"""Host {ssh_info['host']}
+    HostName {ssh_info['host']}
+    User {ssh_info['user']}
+    Port {ssh_info['port']}
+    IdentityFile ~/.ssh/id_ed25519.1
+    RemoteCommand none
+    ForwardAgent yes
+"""
+    return config_template
+
+def read_ssh_config():
+    ssh_config_path = Path.home() / '.ssh' / 'config'
+    if not ssh_config_path.exists():
+        return ""
+    with open(ssh_config_path, 'r') as f:
+        return f.read()
+
+def find_existing_entry(config_content, ip):
+    # Split config into blocks
+    blocks = re.split(r'\n(?=Host\s)', config_content.strip())
+    # Find block that matches the IP
+    for block in blocks:
+        if block.startswith(f'Host {ip}\n'):
+            return block.strip()
+    return None
+
+def remove_existing_entry(config_content, ip):
+    # Split config into blocks
+    blocks = re.split(r'\n(?=Host\s)', config_content.strip())
+    # Filter out blocks that match the IP
+    new_blocks = [block for block in blocks if not block.startswith(f'Host {ip}\n')]
+    # Join blocks back together
+    return '\n\n'.join(block.rstrip() for block in new_blocks)
+
+def main():
+    parser = argparse.ArgumentParser(description='Generate SSH config entry')
+    parser.add_argument('--command', '-c', help='SSH command string (overrides clipboard)')
+    args = parser.parse_args()
+    
+    # Get SSH command from argument or clipboard
+    if args.command:
+        command = args.command
+    else:
+        command = get_clipboard_content()
+        if not command:
+            print("Error: Clipboard is empty and no command provided")
+            return
+    
+    try:
+        # Parse the SSH command
+        ssh_info = parse_ssh_command(command)
+        
+        # Generate config entry
+        config_entry = generate_config_entry(ssh_info)
+        
+        # Print the config entry
+        print("\nGenerated SSH config entry:")
+        print("-" * 40)
+        print(config_entry)
+        
+        # Check for existing entry
+        existing_config = read_ssh_config()
+        existing_entry = find_existing_entry(existing_config, ssh_info['host'])
+        
+        if existing_entry:
+            print("\nWARNING: Found existing entry for this IP:")
+            print("-" * 40)
+            print(existing_entry)
+        
+        # Optionally update SSH config file
+        ssh_config_path = Path.home() / '.ssh' / 'config'
+        should_update = input("\nWould you like to update your SSH config? (y/n): ").lower()
+        
+        if should_update == 'y':
+            # Remove any existing entry for this IP
+            new_config = remove_existing_entry(existing_config, ssh_info['host'])
+            
+            # Add new entry at the beginning
+            if new_config:
+                new_config = config_entry + '\n\n' + new_config
+            else:
+                new_config = config_entry
+            
+            # Write back to file
+            with open(ssh_config_path, 'w') as f:
+                f.write(new_config + '\n')
+            
+            if existing_entry:
+                print(f"Replaced existing entry in {ssh_config_path}")
+            else:
+                print(f"Added new entry to {ssh_config_path}")
+        
+    except ValueError as e:
+        print(f"Error: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+
+if __name__ == "__main__":
+    main()

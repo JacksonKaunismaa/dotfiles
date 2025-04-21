@@ -51,9 +51,9 @@ echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
 [ $LOC = 'remote' ] &&  echo \
     "source $DOT_DIR/config/aliases_speechmatics.sh" >> $HOME/.zshrc
 
-
-ssh-keygen -t ed25519
-cat ~/.ssh/id_ed25519.pub
+# Removed since we do agent forwarding now
+#ssh-keygen -t ed25519
+#cat ~/.ssh/id_ed25519.pub
 
 git config --global user.name "JacksonKaunismaa"
 git config --global user.email "jackkaunis@protonmail.com"
