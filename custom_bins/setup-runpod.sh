@@ -85,5 +85,6 @@ echo "Setup complete!"
 #    echo "Beginning stress test..."
 #    time python3 $DOT_DIR/custom_bins/stress-test.py
 #fi
-echo "zsh" >> ~/.bashrc
+# echo "zsh" >> ~/.bashrc
 # zsh
+echo "fully finished setup-runpod"
