@@ -89,20 +89,14 @@ echo "Setup complete!"
 # zsh
 echo "fully finished setup-runpod"
 
-echo "starting project specific commands"
+# add uv to path
+source $HOME/.local/bin/env
 cd /workspace/alm-jailbreaks
-echo "cd in"
 rm -rf .venv
-echo "env rm"
 uv venv --python 3.11
-echo "env create"
 source .venv/bin/activate
-echo "env enteretD"
 uv pip install -r requirements.txt
-echo "installed reqs"
 uv pip install -e .
-echo "install dir"
 ./scripts/ft_deps.sh
-echo "install ft deps"
 
 /start.sh
