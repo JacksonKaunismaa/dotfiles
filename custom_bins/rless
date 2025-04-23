@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# rless — shuffle and view any list of files in less
+# Usage: rless [file1 file2 …]
+# Example: rless *.txt "weird name with spaces.txt" other.pdf
+
+set -euo pipefail
+
+# If no args given, show usage and exit
+if [ "$#" -eq 0 ]; then
+  cat <<EOF
+Usage: $(basename "$0") [file1 file2 …]
+Shuffle the given files and view them in less.
+EOF
+  exit 1
+fi
+
+# Print each filename null-terminated, shuffle on nulls, then feed to less
+printf '%s\0' "$@" \
+  | shuf -z \
+  | xargs -0 less
+
