@@ -116,6 +116,7 @@ alias gstc="git stash clear"
 
 alias ggsup='git branch --set-upstream-to=origin/$(git_current_branch)'
 alias gpsup='git push --set-upstream origin $(git_current_branch)'
+alias gbc='git branch | cat'
 
 #-------------------------------------------------------------
 # tmux
