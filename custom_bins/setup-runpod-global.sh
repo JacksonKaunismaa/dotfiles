@@ -10,3 +10,5 @@ apt-get install -y vim
 echo "Installing screen..."
 apt-get install -y screen
 echo "Done installing deps!"
+
+/start.sh
