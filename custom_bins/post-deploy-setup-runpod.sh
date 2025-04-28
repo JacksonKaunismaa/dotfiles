@@ -1,5 +1,5 @@
 git clone git@github.com:jplhughes/alm-jailbreaks.git
-
+git checkout web_interface
 cd alm-jailbreaks
 
 # add uv to path
