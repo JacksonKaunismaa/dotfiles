@@ -8,7 +8,7 @@ git checkout ft_synthetic_data
 cwd=$(pwd)
 source $HOME/.local/bin/env
 rm -rf $cwd/.venv
-uv venv --python 3.11 $cwd
+uv venv --python 3.11 $cwd/.venv
 source $cwd/.venv/bin/activate
 uv pip install -r $cwd/requirements.txt
 uv pip install -e $cwd
