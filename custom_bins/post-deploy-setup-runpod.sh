@@ -1,3 +1,4 @@
+#!/bin/bash
 cd $HOME
 git clone git@github.com:jplhughes/alm-jailbreaks.git
 cd alm-jailbreaks
