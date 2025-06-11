@@ -1,4 +1,6 @@
 #!/bin/bash
+git remote remove origin
+git remote add origin git@github.com:JacksonKaunismaa/dotfiles.git
 cd $HOME
 git clone git@github.com:jplhughes/alm-jailbreaks.git
 cd alm-jailbreaks
