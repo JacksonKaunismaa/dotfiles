@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# GitHub SSH Port 443 Fix Script
+# Run this when SSH to github.com:22 is blocked
+
+echo "🔧 Fixing GitHub SSH connection to use port 443..."
+
+# Backup existing SSH config if it exists
+if [ -f ~/.ssh/config ]; then
+    echo "📋 Backing up existing SSH config..."
+    cp ~/.ssh/config ~/.ssh/config.backup.$(date +%Y%m%d_%H%M%S)
+fi
+
+# Create .ssh directory if it doesn't exist
+mkdir -p ~/.ssh
+
+# Check if GitHub config already exists
+if grep -q "Host github.com" ~/.ssh/config 2>/dev/null; then
+    echo "⚠️  GitHub SSH config already exists in ~/.ssh/config"
+    echo "   Please check your config manually or remove existing GitHub entries"
+    exit 1
+fi
+
+# Test if port 443 works before adding config
+echo "🧪 Testing GitHub SSH over port 443..."
+test_output=$(timeout 10 ssh -T git@ssh.github.com -p 443 -o StrictHostKeyChecking=no -o ConnectTimeout=5 2>&1)
+if [[ $test_output == *"You've successfully authenticated"* ]] || [[ $test_output == *"Hi "* ]]; then
+    echo "✅ Port 443 connection works!"
+else
+    echo "❌ Port 443 connection failed. This fix won't work on this network."
+    echo "Output: $test_output"
+    exit 1
+fi
+
+# Add GitHub config to SSH config
+echo "📝 Adding GitHub SSH config..."
+cat >> ~/.ssh/config << 'EOF'
+
+# GitHub SSH over HTTPS (port 443)
+Host github.com
+    Hostname ssh.github.com
+    Port 443
+    User git
+EOF
+
+echo "✅ GitHub SSH config added successfully!"
+
+# Test the new configuration
+echo "🧪 Testing new configuration..."
+final_test=$(ssh -T git@github.com -o ConnectTimeout=10 2>&1)
+if [[ $final_test == *"You've successfully authenticated"* ]] || [[ $final_test == *"Hi "* ]]; then
+    echo "🎉 Success! GitHub SSH is now working through port 443"
+    echo ""
+    echo "You can now use normal git commands:"
+    echo "  git clone git@github.com:user/repo.git"
+    echo "  git push/pull will work normally"
+else
+    echo "❌ Configuration added but test failed. Check your SSH keys with:"
+    echo "   ssh-add -l"
+    echo "Output: $final_test"
+fi
+
+echo ""
+echo "📋 Config file location: ~/.ssh/config"
+echo "🔄 Backup created at: ~/.ssh/config.backup.$(date +%Y%m%d_%H%M%S)"
