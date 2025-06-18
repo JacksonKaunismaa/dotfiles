@@ -71,7 +71,7 @@ if [ $machine == "Arch" ]; then
     [ $tmux == true ] && maybe_sudo pacman -S tmux
     
     if [ $extras == true ]; then
-        maybe_sudo pacman -S ripgrep jless rustup
+        maybe_sudo pacman -S ripgrep jless rustup less htop
         # Check if yay is installed, if not install it
         if ! command -v yay &> /dev/null; then
             echo "Installing yay..."
@@ -93,7 +93,7 @@ elif [ $machine == "Linux" ]; then
     [ $tmux == true ] && maybe_sudo apt-get install -y tmux
     
     if [ $extras == true ]; then
-        maybe_sudo apt-get install -y ripgrep
+        maybe_sudo apt-get install -y ripgrep less htop
 
 				echo "Installing homebrew..."
         yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
