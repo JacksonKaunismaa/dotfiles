@@ -7,4 +7,4 @@ source $HOME/.venv/bin/activate
 uv pip install vllm --torch-backend=auto
 uv pip install flash-attn --no-build-isolation
 uv pip install transformers accelerate bitsandbytes huggingface_hub datasets fastapi uvicorn pydantic
-ln -s $DOT/custom_bins/launch-vllm.sh $HOME/launch-vllm.sh
+ln -s $PWD/custom_bins/launch-vllm.sh $HOME/launch-vllm.sh

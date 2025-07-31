@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# vLLM LoRA Server Startup Script
+# vLLM LoRA Server Startup Script with Logits Support
 # Usage: ./start_lora_server.sh
 
 set -e
 
-echo "🚀 Starting vLLM server with LoRA support..."
+echo "🚀 Starting vLLM server with LoRA support and logits..."
 
 # Set environment variables for your configuration
 export MODEL_NAME="huihui-ai/Llama-3.3-70B-Instruct-abliterated-finetuned-GPTQ-Int8"
@@ -30,8 +30,8 @@ export CUDA_VISIBLE_DEVICES=0,1
 export NCCL_DEBUG=INFO
 export TOKENIZERS_PARALLELISM=false
 
-# Port configuration
-PORT=${1:-8000}
+# Port configuration - changed to 80
+PORT=80
 
 echo "📋 Configuration:"
 echo "   Model: $MODEL_NAME"
@@ -56,13 +56,13 @@ with open('lora_config.json', 'r') as f:
         print(f\"  {module['name']}={module['path']}\")
 "
 else
-    echo "⚠️  No LoRA config file found, starting without pre-loaded adapters"
+    echo "⚠  No LoRA config file found, starting without pre-loaded adapters"
 fi
 
 echo ""
 echo "🎯 Starting server..."
 
-# Start vLLM server with all your settings
+# Start vLLM server with all your settings + logprobs support
 python -m vllm.entrypoints.openai.api_server \
     --model "$MODEL_NAME" \
     --host 0.0.0.0 \
@@ -80,8 +80,10 @@ python -m vllm.entrypoints.openai.api_server \
     --max-cpu-loras "$MAX_CPU_LORAS" \
     --fully-sharded-loras \
     --enable-chunked-prefill \
-    --max-model-len "$MAX_SEQ_LEN_TO_CAPTURE" \
-    --disable-log-stats
+    --max-seq-len-to-capture "$MAX_SEQ_LEN_TO_CAPTURE" \
+    --max-logprobs 20000 \
+    --disable-log-stats \
+    ${LORA_MODULES_ARG}
 
 echo "✅ Server started! Access it at: http://0.0.0.0:$PORT"
 echo "📖 API documentation available at: http://0.0.0.0:$PORT/docs"
