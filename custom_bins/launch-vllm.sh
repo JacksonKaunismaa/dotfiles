@@ -7,11 +7,14 @@ set -e
 
 echo "🚀 Starting vLLM server with LoRA support..."
 
+GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
+CUDA_DEVICES=$(seq -s ',' 0 $((GPU_COUNT-1)))
+
 # Set environment variables for your configuration
 export MODEL_NAME="huihui-ai/Llama-3.3-70B-Instruct-abliterated-finetuned-GPTQ-Int8"
 export TRUST_REMOTE_CODE=true
 export DISTRIBUTED_EXECUTOR_BACKEND=mp
-export TENSOR_PARALLEL_SIZE=4
+export TENSOR_PARALLEL_SIZE=$GPU_COUNT
 export MAX_PARALLEL_LOADING_WORKERS=32
 export ENABLE_PREFIX_CACHING=true
 export MAX_NUM_BATCHED_TOKENS=8192
@@ -26,7 +29,7 @@ export MAX_SEQ_LEN_TO_CAPTURE=50000
 export MAX_CPU_LORAS=12
 
 # GPU configuration
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=$CUDA_DEVICES
 export NCCL_DEBUG=INFO
 export TOKENIZERS_PARALLELISM=false
 
@@ -66,7 +69,7 @@ with open('lora_config.json', 'r') as f:
     MODULE_COUNT=$(echo "$LORA_MODULES_ARG" | wc -w)
     echo "   Found $MODULE_COUNT LoRA adapters"
 else
-    echo "⚠️  No LoRA config file found, starting without pre-loaded adapters"
+    echo "⚠  No LoRA config file found, starting without pre-loaded adapters"
 fi
 
 echo ""
@@ -122,3 +125,4 @@ fi
 
 echo "✅ Server started! Access it at: http://0.0.0.0:$PORT"
 echo "📖 API documentation available at: http://0.0.0.0:$PORT/docs"
+
