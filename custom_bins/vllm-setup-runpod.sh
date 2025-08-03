@@ -1,4 +1,8 @@
 #!/bin/bash
+git remote remove origin
+git remote add origin git@github.com:JacksonKaunismaa/dotfiles.git
+cd $HOME
+
 # add uv to path
 source $HOME/.local/bin/env
 rm -rf $HOME/.venv
