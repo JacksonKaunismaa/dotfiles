@@ -15,14 +15,21 @@ def get_clipboard_content():
         root.destroy()
 
 def parse_ssh_command(command):
-    # Pattern to match SSH command components
-    pattern = r'ssh\s+([^@]+)@([^\s]+)\s+-p\s+(\d+)'
+    # Pattern to match SSH command components - now handles optional port
+    # This pattern matches: ssh user@host with optional -p port and other flags
+    pattern = r'ssh\s+([^@\s]+)@([^\s]+)(?:\s+.*)?'
     match = re.match(pattern, command)
     
     if not match:
         raise ValueError("Invalid SSH command format")
     
-    user, host, port = match.groups()
+    user, host = match.groups()
+    
+    # Extract port if specified with -p flag
+    port_pattern = r'-p\s+(\d+)'
+    port_match = re.search(port_pattern, command)
+    port = port_match.group(1) if port_match else '22'
+    
     return {
         'user': user,
         'host': host,
@@ -30,11 +37,13 @@ def parse_ssh_command(command):
     }
 
 def generate_config_entry(ssh_info):
+    # Only include Port line if it's not the default port 22
+    port_line = f"    Port {ssh_info['port']}\n" if ssh_info['port'] != '22' else ""
+    
     config_template = f"""Host {ssh_info['host']}
     HostName {ssh_info['host']}
     User {ssh_info['user']}
-    Port {ssh_info['port']}
-    IdentityFile ~/.ssh/id_ed25519.1
+{port_line}    IdentityFile ~/.ssh/id_ed25519.1
     # RemoteCommand none
     ForwardAgent yes
 """
@@ -86,6 +95,8 @@ def main():
         config_entry = generate_config_entry(ssh_info)
         
         # Print the config entry
+        print(f"\nParsed SSH command: {command.strip()}")
+        print(f"User: {ssh_info['user']}, Host: {ssh_info['host']}, Port: {ssh_info['port']}")
         print("\nGenerated SSH config entry:")
         print("-" * 40)
         print(config_entry)
