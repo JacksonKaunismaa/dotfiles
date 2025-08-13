@@ -22,4 +22,10 @@ rm -rf $HOME/.venv
 uv venv --python 3.12 $HOME/.venv
 source $HOME/.venv/bin/activate
 uv pip install transformers transformer_lens torch optimum peft ipykernel logbar threadpoolctl tokenicer device_smi Pillow 
+uv pip install pynvml
+cu_ver=$(python3 -c "import pynvml; pynvml.nvmlInit(); ver = str(pynvml.nvmlSystemGetCudaDriverVersion()); print(ver[:2]+'-'+ver[3])")
+
+apt-get install cuda-nvcc-$cu_ver
+apt-get install cuda-libraries-dev-$cu_ver
+
 uv pip install gptqmodel --no-build-isolation
