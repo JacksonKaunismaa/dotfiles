@@ -36,11 +36,14 @@ def parse_ssh_command(command):
         'port': port
     }
 
-def generate_config_entry(ssh_info):
+def generate_config_entry(ssh_info, alias=None):
+    # Use alias if provided, otherwise use host
+    host_name = alias if alias else ssh_info['host']
+    
     # Only include Port line if it's not the default port 22
     port_line = f"    Port {ssh_info['port']}\n" if ssh_info['port'] != '22' else ""
     
-    config_template = f"""Host {ssh_info['host']}
+    config_template = f"""Host {host_name}
     HostName {ssh_info['host']}
     User {ssh_info['user']}
 {port_line}    IdentityFile ~/.ssh/id_ed25519.1
@@ -56,26 +59,27 @@ def read_ssh_config():
     with open(ssh_config_path, 'r') as f:
         return f.read()
 
-def find_existing_entry(config_content, ip):
+def find_existing_entry(config_content, host_name):
     # Split config into blocks
     blocks = re.split(r'\n(?=Host\s)', config_content.strip())
-    # Find block that matches the IP
+    # Find block that matches the host name (could be IP or alias)
     for block in blocks:
-        if block.startswith(f'Host {ip}\n'):
+        if block.startswith(f'Host {host_name}\n'):
             return block.strip()
     return None
 
-def remove_existing_entry(config_content, ip):
+def remove_existing_entry(config_content, host_name):
     # Split config into blocks
     blocks = re.split(r'\n(?=Host\s)', config_content.strip())
-    # Filter out blocks that match the IP
-    new_blocks = [block for block in blocks if not block.startswith(f'Host {ip}\n')]
+    # Filter out blocks that match the host name
+    new_blocks = [block for block in blocks if not block.startswith(f'Host {host_name}\n')]
     # Join blocks back together
     return '\n\n'.join(block.rstrip() for block in new_blocks)
 
 def main():
     parser = argparse.ArgumentParser(description='Generate SSH config entry')
     parser.add_argument('--command', '-c', help='SSH command string (overrides clipboard)')
+    parser.add_argument('--alias', '-a', help='Alias for the SSH host')
     args = parser.parse_args()
     
     # Get SSH command from argument or clipboard
@@ -91,22 +95,34 @@ def main():
         # Parse the SSH command
         ssh_info = parse_ssh_command(command)
         
+        # Get alias from argument or prompt user
+        alias = args.alias
+        if not alias:
+            alias = input(f"\nEnter an alias for {ssh_info['host']} (or press Enter to use the IP): ").strip()
+            if not alias:
+                alias = None
+        
+        # Determine the host name to use (alias or IP)
+        host_name = alias if alias else ssh_info['host']
+        
         # Generate config entry
-        config_entry = generate_config_entry(ssh_info)
+        config_entry = generate_config_entry(ssh_info, alias)
         
         # Print the config entry
         print(f"\nParsed SSH command: {command.strip()}")
         print(f"User: {ssh_info['user']}, Host: {ssh_info['host']}, Port: {ssh_info['port']}")
+        if alias:
+            print(f"Alias: {alias}")
         print("\nGenerated SSH config entry:")
         print("-" * 40)
         print(config_entry)
         
         # Check for existing entry
         existing_config = read_ssh_config()
-        existing_entry = find_existing_entry(existing_config, ssh_info['host'])
+        existing_entry = find_existing_entry(existing_config, host_name)
         
         if existing_entry:
-            print("\nWARNING: Found existing entry for this IP:")
+            print(f"\nWARNING: Found existing entry for '{host_name}':")
             print("-" * 40)
             print(existing_entry)
         
@@ -115,8 +131,8 @@ def main():
         should_update = input("\nWould you like to update your SSH config? (y/n): ").lower()
         
         if should_update == 'y':
-            # Remove any existing entry for this IP
-            new_config = remove_existing_entry(existing_config, ssh_info['host'])
+            # Remove any existing entry for this host name
+            new_config = remove_existing_entry(existing_config, host_name)
             
             # Add new entry at the beginning
             if new_config:
