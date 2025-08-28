@@ -82,7 +82,7 @@ if [ $machine == "Arch" ]; then
             cd ..
             rm -rf yay
         fi
-        yay -S dust peco code2prompt
+        yay -S dust peco 
     fi
 
 # Installing on other Linux distributions with apt
@@ -104,7 +104,7 @@ elif [ $machine == "Linux" ]; then
         yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 				echo "Sourcing rust env..."
         . "$HOME/.cargo/env" 
-        yes | cargo install code2prompt
+        yes | cargo install 
 				yes | brew install dust jless peco
     fi
 
@@ -117,7 +117,7 @@ elif [ $machine == "Mac" ]; then
 
         yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         . "$HOME/.cargo/env" 
-        yes | cargo install code2prompt
+        yes | cargo install 
         yes | maybe_sudo brew install peco
     fi
 
