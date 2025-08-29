@@ -2,7 +2,8 @@
 # truecolor on
 hardstatus off
 hardstatus alwayslastline
-hardstatus string '%{= KW} %H %{= Kw}|%{-} %-Lw%{= bW}%n%f %t%{-}%+Lw %=%C%a %Y-%M-%d'
+#hardstatus string '%{= KW} %H %{= Kw}|%{-} %-Lw%{= bW}%n%f %t%{-}%+Lw %=%C%a %Y-%M-%d'
+hardstatus string '%{= kW} %H %{= kw}|%{-} %-Lw%{= kb}%n%f %t%{-}%+Lw %=%C%a %Y-%M-%d'
 
 # Set default screen window to 1 (easier tabbing)
 bind c screen 1
