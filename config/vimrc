@@ -40,7 +40,7 @@ nnoremap <space> za
 " Add line numbers
 set nu
 " Enable vim clipboad (like using <"*yy>)
-set clipboard=unnamed
+set clipboard=unnamedplus
 " python identation
 au BufNewFile,BufRead *.py
     \ set tabstop=4 |

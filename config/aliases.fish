@@ -6,7 +6,7 @@ alias zrc "cd $DOT_DIR/zsh"
 alias dot "cd $DOT_DIR"
 alias jp "jupyter lab"
 alias hn "hostname"
-alias vikeybind "vim $HOME/.config/hypr/hyprland/keybinds.conf"
+alias vikeybind "vim $HOME/.config/hypr/custom/keybinds.conf"
 alias hyprconf "cd $HOME/.config/hypr"
 alias fishconf "cd $HOME/.config/fish"
 
