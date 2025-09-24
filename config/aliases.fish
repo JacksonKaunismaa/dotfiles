@@ -7,7 +7,7 @@ alias dot "cd $DOT_DIR"
 alias jp "jupyter lab"
 alias hn "hostname"
 alias vikeybind "vim $HOME/.config/hypr/custom/keybinds.conf"
-alias hyprconf "cd $HOME/.config/hypr"
+alias hyprconf "cd $HOME/.config/hypr/custom"
 alias fishconf "cd $HOME/.config/fish"
 
 # -------------------------------------------------------------------
