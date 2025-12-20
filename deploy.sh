@@ -36,8 +36,15 @@ echo "deploying on $LOC machine..."
 # Tmux setup
 echo "source $DOT_DIR/config/tmux.conf" > $HOME/.tmux.conf
 
-# screen setup
-cp $DOT_DIR/config/screenrc $HOME/.screenrc
+# screen setup - detect zsh path and substitute
+if [ -x "$HOME/.local/bin/zsh" ]; then
+    ZSH_PATH="$HOME/.local/bin/zsh"
+elif command -v zsh &> /dev/null; then
+    ZSH_PATH="$(command -v zsh)"
+else
+    ZSH_PATH="/bin/zsh"
+fi
+sed "s|__ZSH_PATH__|$ZSH_PATH|g" $DOT_DIR/config/screenrc > $HOME/.screenrc
 
 
 if [[ $VIM == "true" ]]; then
