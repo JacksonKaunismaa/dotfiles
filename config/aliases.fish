@@ -139,19 +139,19 @@ alias tdel "tmux kill-session -t"
 # ls
 #-------------------------------------------------------------
 
-alias l "ls -F --color auto"  # Column, classiFy (append indicator), color When
+alias l "ls -F --color=auto"                    # classify, color
 alias ll "ls -l --group-directories-first"
-alias la 'ls -al'         # show hidden files (by default -a is "almost all") 
-alias lx 'ls -l --sort=extension'        # sort by extension
-alias lk 'ls -lSr --sort=size'        # sort by size, biggest last
-alias lc 'ls -lmr --sort=modified'    # sort by and show change time, most recent last
-alias lu 'ls -lur --sort=accessed'   # sort by and show access time, most recent last
-alias lt 'ls -lr --time=modified --sort=modified'        # sort by date, most recent last
-alias lm 'ls -al |more'   # pipe through 'more'
-alias lr 'ls -lR'         # recursive ls
-alias tree 'tree -Csu'    # nice alternative to 'recursive ls'
-alias ldu 'ls -la --total-size --sort=size'     # sort by recursive size
-
+alias la 'ls -la'                               # show hidden files
+alias lx 'ls -l --sort=extension'               # sort by extension
+alias lk 'ls -l --sort=size --reverse'          # sort by size, biggest last
+alias lc 'ls -l --changed --sort=changed --reverse'  # sort by change time, most recent last
+alias lu 'ls -l --accessed --sort=accessed --reverse' # sort by access time, most recent last
+alias lt 'ls -l --sort=oldest'                  # sort by modified date, most recent last
+alias ltr 'ls -l --sort=newest'                  # sort by modified date, most recent last
+alias lm 'ls -la | more'                        # pipe through more
+alias lr 'ls -l --tree'                         # recursive tree view
+alias tree 'ls --tree'                          # tree using eza
+alias ldu 'ls -la --total-size --sort=size'     # recursive size, sorted
 
 #-------------------------------------------------------------
 # env

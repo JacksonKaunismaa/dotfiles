@@ -79,3 +79,8 @@ The repository includes specialized setups for:
 - Machine learning workflows (PyTorch, Transformers)
 - Jupyter notebook environments
 - SSH key management and forwarding
+
+## Git Commit Guidelines
+
+- Do NOT add "Co-Authored-By: Claude" or any AI attribution lines to commit messages
+- Keep commit messages concise and lowercase
