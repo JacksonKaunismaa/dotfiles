@@ -1,28 +1,28 @@
 #!/bin/bash
 set -uo pipefail
 USAGE=$(cat <<-END
-    Usage: ./deploy.sh [OPTIONS], eg. ./deploy.sh --local --vim
-    Creates ~/.zshrc and ~/.tmux.conf with location
+    Usage: ./deploy.sh [OPTIONS], eg. ./deploy.sh --local
+    Creates ~/.zshrc, ~/.tmux.conf, ~/.vimrc with location
     specific config
 
     OPTIONS:
         --local                 deploy local config only, only common aliases are sourced
-        --vim                   deploy very simple vimrc config 
+        --no-vim                skip deploying vimrc
 END
 )
 
 export DOT_DIR=$(dirname $(realpath $0))
 
 LOC="remote"
-VIM="false"
+VIM="true"
 while (( "$#" )); do
     case "$1" in
         -h|--help)
             echo "$USAGE" && exit 1 ;;
         --local)
             LOC="local" && shift ;;
-        --vim)
-            VIM="true" && shift ;;
+        --no-vim)
+            VIM="false" && shift ;;
         --) # end argument parsing
             shift && break ;;
         -*|--*=) # unsupported flags

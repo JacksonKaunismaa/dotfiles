@@ -17,9 +17,9 @@ This is a dotfiles repository for managing ZSH, Tmux, Vim, and SSH configuration
 ./install.sh --tmux --zsh --extras
 
 # Deploy configurations
-./deploy.sh              # For remote Linux machines
-./deploy.sh --local      # For local Mac machines  
-./deploy.sh --vim        # Include simple vimrc
+./deploy.sh              # For remote Linux machines (includes vimrc)
+./deploy.sh --local      # For local Mac machines
+./deploy.sh --no-vim     # Skip vimrc deployment
 ```
 
 ### Cloud Platform Setup
