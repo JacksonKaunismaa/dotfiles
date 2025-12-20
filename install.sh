@@ -9,6 +9,7 @@ USAGE=$(cat <<-END
         --zsh        install zsh
         --extras     install extra dependencies
         --is-root    run commands without sudo
+        --no-pkg     skip package manager installs (for restricted environments)
 
     If OPTIONS are passed they will be installed
     with pacman if on arch, apt if on linux, or brew if on OSX
@@ -20,6 +21,7 @@ tmux=false
 extras=false
 force=false
 is_root=false
+no_pkg=false
 while (( "$#" )); do
     case "$1" in
         -h|--help)
@@ -34,6 +36,8 @@ while (( "$#" )); do
             force=true && shift ;;
         --is-root)
             is_root=true && shift ;;
+        --no-pkg)
+            no_pkg=true && shift ;;
         --) # end argument parsing
             shift && break ;;
         -*|--*=) # unsupported flags
@@ -64,7 +68,9 @@ case "${operating_system}" in
 esac
 
 # Installing on Arch Linux with pacman
-if [ $machine == "Arch" ]; then
+if [ "$no_pkg" = true ]; then
+    echo "Skipping package manager installs (--no-pkg)"
+elif [ $machine == "Arch" ]; then
     DOT_DIR=$(dirname $(realpath $0))
     maybe_sudo pacman -Syu
     [ $zsh == true ] && maybe_sudo pacman -S zsh
