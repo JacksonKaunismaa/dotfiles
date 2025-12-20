@@ -78,15 +78,16 @@ if [ "$no_pkg" = true ]; then
         else
             echo "Installing zsh from source to ~/.local..."
             mkdir -p ~/.local
+            BUILD_DIR=$(mktemp -d -p "$HOME" .zsh-build.XXXXXX)
             ZSH_VERSION="5.9"
             ZSH_TAR="zsh-${ZSH_VERSION}.tar.xz"
-            cd /tmp
+            cd "$BUILD_DIR"
             curl -L "https://sourceforge.net/projects/zsh/files/zsh/${ZSH_VERSION}/${ZSH_TAR}/download" -o "$ZSH_TAR"
             tar xf "$ZSH_TAR"
             cd "zsh-${ZSH_VERSION}"
             ./configure --prefix="$HOME/.local"
             make && make install
-            cd /tmp && rm -rf "zsh-${ZSH_VERSION}" "$ZSH_TAR"
+            rm -rf "$BUILD_DIR"
             echo "zsh installed to ~/.local/bin/zsh - make sure ~/.local/bin is in your PATH"
         fi
     fi
