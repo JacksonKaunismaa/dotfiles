@@ -70,6 +70,26 @@ esac
 # Installing on Arch Linux with pacman
 if [ "$no_pkg" = true ]; then
     echo "Skipping package manager installs (--no-pkg)"
+
+    # Local zsh install from source
+    if [ "$zsh" = true ]; then
+        if [ -x "$HOME/.local/bin/zsh" ] && [ "$force" = false ]; then
+            echo "zsh already installed at ~/.local/bin/zsh, skipping (use --force to reinstall)"
+        else
+            echo "Installing zsh from source to ~/.local..."
+            mkdir -p ~/.local
+            ZSH_VERSION="5.9"
+            ZSH_TAR="zsh-${ZSH_VERSION}.tar.xz"
+            cd /tmp
+            curl -L "https://sourceforge.net/projects/zsh/files/zsh/${ZSH_VERSION}/${ZSH_TAR}/download" -o "$ZSH_TAR"
+            tar xf "$ZSH_TAR"
+            cd "zsh-${ZSH_VERSION}"
+            ./configure --prefix="$HOME/.local"
+            make && make install
+            cd /tmp && rm -rf "zsh-${ZSH_VERSION}" "$ZSH_TAR"
+            echo "zsh installed to ~/.local/bin/zsh - make sure ~/.local/bin is in your PATH"
+        fi
+    fi
 elif [ $machine == "Arch" ]; then
     DOT_DIR=$(dirname $(realpath $0))
     maybe_sudo pacman -Syu
