@@ -85,10 +85,15 @@ if [ "$no_pkg" = true ]; then
             curl -L "https://sourceforge.net/projects/zsh/files/zsh/${ZSH_VERSION}/${ZSH_TAR}/download" -o "$ZSH_TAR"
             tar xf "$ZSH_TAR"
             cd "zsh-${ZSH_VERSION}"
-            ./configure --prefix="$HOME/.local"
-            make && make install
+            if ./configure --prefix="$HOME/.local" && make && make install; then
+                echo "zsh built from source and installed to ~/.local/bin/zsh"
+            else
+                echo "Source build failed, falling back to prebuilt static binary..."
+                cd "$HOME"
+                sh -c "$(curl -fsSL https://raw.githubusercontent.com/romkatv/zsh-bin/master/install)" -- -d ~/.local -q
+            fi
             rm -rf "$BUILD_DIR"
-            echo "zsh installed to ~/.local/bin/zsh - make sure ~/.local/bin is in your PATH"
+            echo "make sure ~/.local/bin is in your PATH"
         fi
     fi
 elif [ $machine == "Arch" ]; then
