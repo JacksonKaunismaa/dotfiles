@@ -198,6 +198,9 @@ else
     git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
     yes | ~/.fzf/install
 
+    # Install Claude Code CLI
+    curl -fsSL https://claude.ai/install.sh | sh
+
     # NO_ASK_OPENAI_API_KEY=1 zsh -c "$(curl -fsSL https://raw.githubusercontent.com/hmirin/ask.sh/main/install.sh)"
 
     echo " --------- INSTALLED SUCCESSFULLY ✅ ----------- "
