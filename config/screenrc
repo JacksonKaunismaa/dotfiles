@@ -1,3 +1,7 @@
+# shell config (must be before 'screen' commands)
+defshell __ZSH_PATH__
+shell __ZSH_PATH__
+
 # status bar
 # truecolor on
 hardstatus off
@@ -19,5 +23,3 @@ altscreen on
 
 # make it so we can scroll up in the window (also breaks vim shift+arrow)
 termcapinfo xterm* ti@:te@
-defshell __ZSH_PATH__
-shell __ZSH_PATH__
