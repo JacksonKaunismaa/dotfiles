@@ -54,9 +54,10 @@ fi
 
 # zshrc setup
 echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
-# conifg/aliases_speechmatics.sh adds remote specific aliases and cmds
-[ $LOC = 'remote' ] &&  echo \
-    "source $DOT_DIR/config/aliases_speechmatics.sh" >> $HOME/.zshrc
+# source remote-specific aliases if they exist
+if [ $LOC = 'remote' ] && [ -f "$DOT_DIR/config/aliases_speechmatics.sh" ]; then
+    echo "source $DOT_DIR/config/aliases_speechmatics.sh" >> $HOME/.zshrc
+fi
 
 # Removed since we do agent forwarding now
 #ssh-keygen -t ed25519

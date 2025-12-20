@@ -164,6 +164,9 @@ fi
 
 echo "Done installing basics."
 
+# Ensure local bin is in PATH for oh-my-zsh installer to find zsh
+export PATH="$HOME/.local/bin:$PATH"
+
 # Setting up oh my zsh and oh my zsh plugins
 ZSH=~/.oh-my-zsh
 ZSH_CUSTOM=$ZSH/custom
