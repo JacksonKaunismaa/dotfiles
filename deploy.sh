@@ -52,6 +52,11 @@ if [[ $VIM == "true" ]]; then
     echo "source $DOT_DIR/config/vimrc" > $HOME/.vimrc
 fi
 
+# Claude Code config
+mkdir -p $HOME/.claude
+ln -sf $DOT_DIR/config/CLAUDE.md $HOME/.claude/CLAUDE.md
+echo "deployed Claude Code config"
+
 # zshrc setup
 echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
 # source remote-specific aliases if they exist

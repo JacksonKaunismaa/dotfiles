@@ -9,6 +9,8 @@ alias hn "hostname"
 alias vikeybind "vim $HOME/.config/hypr/custom/keybinds.conf"
 alias hyprconf "cd $HOME/.config/hypr/custom"
 alias fishconf "cd $HOME/.config/fish"
+alias claude "env -u KITTY_WINDOW_ID $HOME/.local/bin/claude"
+alias clauded "env -u KITTY_WINDOW_ID $HOME/.local/bin/claude --dangerously-skip-permissions"
 
 # -------------------------------------------------------------------
 # general
