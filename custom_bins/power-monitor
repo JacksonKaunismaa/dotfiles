@@ -6,7 +6,8 @@ INTERVAL=${1:-30}
 DURATION_MIN=${2:-60}
 TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
 LOGFILE="/tmp/power-monitor-${TIMESTAMP}.log"
-ITERATIONS=$((DURATION_MIN * 60 / INTERVAL))
+DURATION_SEC=$((DURATION_MIN * 60))
+START_EPOCH=$(date +%s)
 
 # Colors
 RED='\033[0;31m'
@@ -30,16 +31,23 @@ RAPL_PSYS="/sys/class/powercap/intel-rapl/intel-rapl:1/energy_uj"  # Platform/sy
 get_battery_info() {
     local capacity=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null)
     local status=$(cat /sys/class/power_supply/BAT0/status 2>/dev/null)
-    local power_now=$(cat /sys/class/power_supply/BAT0/power_now 2>/dev/null)
-    local voltage=$(cat /sys/class/power_supply/BAT0/voltage_now 2>/dev/null)
-    local current=$(cat /sys/class/power_supply/BAT0/current_now 2>/dev/null)
 
-    # power_now in microwatts, or calculate from voltage*current
-    local watts="0"
-    if [[ -n "$power_now" && "$power_now" -gt 0 ]]; then
-        watts=$(echo "scale=2; $power_now / 1000000" | bc)
-    elif [[ -n "$voltage" && -n "$current" ]]; then
-        watts=$(echo "scale=2; ($voltage * $current) / 1000000000000" | bc)
+    # Try lm-sensors first (most accurate - actual measured power)
+    local watts=$(sensors 2>/dev/null | grep -A2 "BAT0-acpi" | grep "power1" | awk '{print $2}')
+
+    # Fallback to sysfs
+    if [[ -z "$watts" || "$watts" == "0" ]]; then
+        local power_now=$(cat /sys/class/power_supply/BAT0/power_now 2>/dev/null)
+        local voltage=$(cat /sys/class/power_supply/BAT0/voltage_now 2>/dev/null)
+        local current=$(cat /sys/class/power_supply/BAT0/current_now 2>/dev/null)
+
+        if [[ -n "$power_now" && "$power_now" -gt 0 ]]; then
+            watts=$(echo "scale=2; $power_now / 1000000" | bc)
+        elif [[ -n "$voltage" && -n "$current" ]]; then
+            watts=$(echo "scale=2; ($voltage * $current) / 1000000000000" | bc)
+        else
+            watts="0"
+        fi
     fi
     echo "$capacity|$status|$watts"
 }
@@ -74,6 +82,76 @@ get_top_cpu_processes() {
     }'
 }
 
+get_claude_instances() {
+    # Get Claude Code instances with their project and CPU usage
+    local cc_log="$1"
+    echo "--- Claude Code Instances ($(date '+%H:%M:%S')) ---" >> "$cc_log"
+
+    local total_cpu=0
+    local count=0
+
+    while read -r pid cpu mem tty etime; do
+        [[ -z "$pid" ]] && continue
+        local cwd=$(readlink -f /proc/$pid/cwd 2>/dev/null)
+        local project=$(basename "$cwd" 2>/dev/null)
+        # Get child process CPU (subagents, shells spawned by CC)
+        local child_cpu=$(ps --ppid "$pid" -o %cpu= 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+        local total_proc_cpu=$(echo "$cpu + $child_cpu" | bc)
+
+        echo "  $tty: ${cpu}% (+${child_cpu}% children) | $project | age:$etime" >> "$cc_log"
+        total_cpu=$(echo "$total_cpu + $total_proc_cpu" | bc)
+        ((count++))
+    done < <(ps -eo pid,%cpu,%mem,tty,etime,args --sort=-%cpu | grep '[/]claude' | grep -v 'grep' | awk '{print $1, $2, $3, $4, $5}')
+
+    echo "" >> "$cc_log"
+    echo "CC:${total_cpu}%/${count}i"
+}
+
+get_peripheral_power() {
+    # Estimate peripheral power from sysfs where available
+    local periph_log="$1"
+    echo "--- Peripherals ($(date '+%H:%M:%S')) ---" >> "$periph_log"
+
+    # Display brightness (can't measure actual display power on most laptops)
+    local max_bright=$(cat /sys/class/backlight/*/max_brightness 2>/dev/null | head -1)
+    local cur_bright=$(cat /sys/class/backlight/*/brightness 2>/dev/null | head -1)
+    local bright_pct="n/a"
+    if [[ -n "$max_bright" && -n "$cur_bright" && "$max_bright" -gt 0 ]]; then
+        bright_pct=$(echo "scale=0; $cur_bright * 100 / $max_bright" | bc)
+        echo "  Display: ${bright_pct}% brightness" >> "$periph_log"
+    fi
+
+    # WiFi power state
+    local wifi_power=$(cat /sys/class/net/wl*/power/runtime_status 2>/dev/null | head -1)
+    local wifi_state=$(iw dev 2>/dev/null | grep -A5 Interface | grep txpower | awk '{print $2}')
+    echo "  WiFi: power=$wifi_power txpower=${wifi_state:-n/a}dBm" >> "$periph_log"
+
+    # Bluetooth
+    local bt_power=$(rfkill list bluetooth 2>/dev/null | grep -i "soft blocked" | head -1)
+    if [[ "$bt_power" == *"no"* ]]; then
+        echo "  Bluetooth: on" >> "$periph_log"
+    else
+        echo "  Bluetooth: off/blocked" >> "$periph_log"
+    fi
+
+    # USB devices consuming power
+    local usb_count=$(lsusb 2>/dev/null | wc -l)
+    echo "  USB devices: $usb_count" >> "$periph_log"
+
+    # NVMe/SSD power state
+    local nvme_power=$(cat /sys/class/nvme/nvme*/power/runtime_status 2>/dev/null | head -1)
+    echo "  NVMe: $nvme_power" >> "$periph_log"
+
+    # Intel GPU RC6 residency (power saving state)
+    local gpu_rc6=$(cat /sys/class/drm/card*/power/rc6_residency_ms 2>/dev/null | head -1)
+    if [[ -n "$gpu_rc6" ]]; then
+        echo "  iGPU RC6: ${gpu_rc6}ms cumulative" >> "$periph_log"
+    fi
+
+    echo "" >> "$periph_log"
+    echo "Disp:${bright_pct}%"
+}
+
 get_gpu_freq() {
     cat /sys/class/drm/card0/gt_cur_freq_mhz 2>/dev/null || \
     cat /sys/class/drm/card1/gt_cur_freq_mhz 2>/dev/null || \
@@ -82,6 +160,15 @@ get_gpu_freq() {
 
 get_platform_profile() {
     cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo "n/a"
+}
+
+get_cpu_temp() {
+    # Get package temp from coretemp
+    sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+°C'
+}
+
+get_fan_rpm() {
+    sensors 2>/dev/null | grep "cpu_fan" | awk '{print $2}'
 }
 
 get_browser_breakdown() {
@@ -141,10 +228,14 @@ get_browser_breakdown() {
 
 # Header
 BROWSER_LOG="/tmp/power-monitor-browsers-${TIMESTAMP}.log"
+CC_LOG="/tmp/power-monitor-claude-${TIMESTAMP}.log"
+PERIPH_LOG="/tmp/power-monitor-periph-${TIMESTAMP}.log"
 echo -e "${GREEN}=== Power Monitor (Full RAPL) ===${NC}"
-echo "Interval: ${INTERVAL}s | Duration: ${DURATION_MIN}min"
+echo "Interval: ${INTERVAL}s | Duration: ${DURATION_MIN}min (${DURATION_SEC}s)"
 echo "Log: $LOGFILE"
 echo "Browser log: $BROWSER_LOG"
+echo "Claude log: $CC_LOG"
+echo "Periph log: $PERIPH_LOG"
 echo "---"
 
 # Check RAPL availability
@@ -158,7 +249,7 @@ echo "RAPL domains: PKG=$HAVE_PKG CORE=$HAVE_CORE UNCORE=$HAVE_UNCORE PSYS=$HAVE
 echo "---"
 
 # CSV header
-HEADER="TIME,BAT%,STATUS,BAT_W,PKG_W,CORE_W,UNCORE_W,PSYS_W,CPU_MHZ,GPU_MHZ,WIFI_IRQ/s,PROFILE,TOP_PROCS"
+HEADER="TIME,BAT%,STATUS,BAT_W,PKG_W,CORE_W,UNCORE_W,PSYS_W,CPU_MHZ,GPU_MHZ,WIFI_IRQ/s,PROFILE,CC_SUMMARY,TOP_PROCS"
 echo "$HEADER" | tee "$LOGFILE"
 
 # Initialize previous values
@@ -173,7 +264,9 @@ PREV_SAMPLE_TIME=$(date +%s.%N)
 
 sleep 1  # Initial baseline
 
-for ((i=1; i<=ITERATIONS; i++)); do
+while true; do
+    ELAPSED=$(($(date +%s) - START_EPOCH))
+    [[ $ELAPSED -ge $DURATION_SEC ]] && break
     TIMESTAMP=$(date '+%H:%M:%S')
     SAMPLE_TIME=$(date +%s.%N)
 
@@ -209,9 +302,13 @@ for ((i=1; i<=ITERATIONS; i++)); do
     # Other metrics
     CPU_MHZ=$(get_cpu_freq_avg)
     GPU_MHZ=$(get_gpu_freq)
+    CPU_TEMP=$(get_cpu_temp)
+    FAN_RPM=$(get_fan_rpm)
     TOP_PROCS=$(get_top_cpu_processes)
     PROFILE=$(get_platform_profile)
     BROWSER_SUMMARY=$(get_browser_breakdown "$BROWSER_LOG")
+    CC_SUMMARY=$(get_claude_instances "$CC_LOG")
+    PERIPH_SUMMARY=$(get_peripheral_power "$PERIPH_LOG")
 
     # WiFi interrupt rate
     WIFI_IRQ=$(get_wifi_interrupts)
@@ -239,15 +336,16 @@ for ((i=1; i<=ITERATIONS; i++)); do
     fi
 
     # Log to file
-    LINE="$TIMESTAMP,$BAT_PCT,$BAT_STATUS,$BAT_WATTS,$PKG_W,$CORE_W,$UNCORE_W,$PSYS_W,$CPU_MHZ,$GPU_MHZ,$WIFI_RATE,$PROFILE,$TOP_PROCS"
+    LINE="$TIMESTAMP,$BAT_PCT,$BAT_STATUS,$BAT_WATTS,$PKG_W,$CORE_W,$UNCORE_W,$PSYS_W,$CPU_MHZ,$GPU_MHZ,$WIFI_RATE,$PROFILE,$CC_SUMMARY,$TOP_PROCS"
     echo "$LINE" >> "$LOGFILE"
 
     # Display
     echo ""
     echo -e "${STATUS_COLOR}[$TIMESTAMP]${NC} ${CYAN}$PROFILE${NC} | Bat: ${BAT_PCT}%${DRAIN_INFO} | Total: ${BAT_WATTS}W"
     echo -e "  ${CYAN}RAPL:${NC} PKG=${PKG_W}W | Core=${CORE_W}W | Uncore=${UNCORE_W}W | PSys=${PSYS_W}W"
-    echo -e "  ${CYAN}Freq:${NC} CPU=${CPU_MHZ}MHz GPU=${GPU_MHZ}MHz | WiFi: ${WIFI_RATE}/s"
-    echo -e "  ${CYAN}Browsers:${NC} $BROWSER_SUMMARY"
+    echo -e "  ${CYAN}Freq:${NC} CPU=${CPU_MHZ}MHz GPU=${GPU_MHZ}MHz | Temp: ${CPU_TEMP}°C | Fan: ${FAN_RPM}rpm | WiFi: ${WIFI_RATE}/s"
+    echo -e "  ${CYAN}Claude:${NC} $CC_SUMMARY | ${CYAN}Browsers:${NC} $BROWSER_SUMMARY"
+    echo -e "  ${CYAN}Periph:${NC} $PERIPH_SUMMARY"
     echo -e "  ${CYAN}Top:${NC} $TOP_PROCS"
 
     # Store for next iteration
@@ -260,13 +358,15 @@ for ((i=1; i<=ITERATIONS; i++)); do
     PREV_PSYS=$CUR_PSYS
     PREV_SAMPLE_TIME=$SAMPLE_TIME
 
-    [[ $i -lt $ITERATIONS ]] && sleep $INTERVAL
+    sleep $INTERVAL
 done
 
 echo ""
 echo -e "${GREEN}=== Done ===${NC}"
 echo "Log saved to: $LOGFILE"
 echo "Browser details: $BROWSER_LOG"
+echo "Claude details: $CC_LOG"
+echo "Peripheral details: $PERIPH_LOG"
 
 # Summary - properly accounts for AC vs battery time
 echo ""
@@ -332,3 +432,27 @@ END {
     if (core_n>0) printf "  Cores:   %.1fW\n", core/core_n
     if (unc_n>0) printf "  Uncore:  %.1fW\n", unc/unc_n
 }' "$LOGFILE"
+
+# Claude Code instance summary
+echo ""
+echo "Claude Code instances (avg CPU by terminal):"
+awk '
+/^  pts/ {
+    split($1, a, ":")
+    tty = a[1]
+    # Extract CPU percentage
+    match($0, /([0-9.]+)%/, m)
+    cpu = m[1]
+    # Extract project name (after last |, before age:)
+    match($0, /\| ([^ ]+) \| age:/, p)
+    proj = p[1]
+
+    key = tty " " proj
+    sum[key] += cpu
+    count[key]++
+}
+END {
+    for (k in sum) {
+        printf "  %s: %.1f%% avg\n", k, sum[k]/count[k]
+    }
+}' "$CC_LOG" | sort -t: -k2 -rn

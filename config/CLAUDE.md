@@ -1,27 +1,25 @@
 # Claude Code Guide
 
-## Git Commits
-
-**Do not add the co-authored-by footer or emoji to commit messages.**
-
-Just write a normal commit message. No `🤖 Generated with Claude Code` or `Co-Authored-By: Claude` footer. These add unnecessary clutter.
-
 ## Environment Setup
 
 **Use `uv` for package management. Virtual environment is at `.venv`.**
+
+## Running Experiments
+
+**Always use suite files to run experiments.**
+
+Never run experiment entry points directly (e.g., `python run_my_experiment.py`). All experiments go through suite files:
+
+1. Define configs in a suite file (`experiments/*/suite_*.py`)
+2. Run the suite: `python experiments/foo/suite_foo.py --dry-run` then without `--dry-run`
+
+Even for a single condition, use a suite file. The experiment runner automatically saves configs, organizes results into structured directories, and tracks git hashes for reproducibility. Use the `experiment-infrastructure` skill for reference.
 
 ## Backwards Compatibility
 
 **NEVER add backwards compatibility. No exceptions.**
 
 This is a research codebase, not a production library. Backwards compatibility leads to bloated and confusing code.
-
-When changing an interface:
-1. Change it
-2. Update all call sites
-3. Delete the old way
-
-No deprecated parameters. No compatibility shims. No legacy code paths.
 
 ## Documentation Lookup
 
@@ -33,24 +31,23 @@ Don't guess or assume how external libraries work. Use web search and web fetch 
 
 **Glob patterns are case-sensitive. Try alternative cases when searching.**
 
-When searching for files, remember that glob patterns are case-sensitive on Linux. Users don't always provide the exact case. If `**/Config.py` returns nothing, also try `**/config.py`.
+If `**/Config.py` returns nothing, also try `**/config.py`.
 
 ## Best Practices
 
 - **CSV files**: Always use pandas (`pd.read_csv()`), never `csv.DictReader`
 - **Prompts**: Always use Jinja templates, never inline Python strings. Even short prompts. All formatting should be done in Jinja, not Python.
+- **Model inference**: Always use Inspect or Safety Tooling for model calls, never raw OpenAI/Anthropic clients. These frameworks handle logging, retries, and structured outputs consistently.
 
-### Config Structure
+### Global Variables — NEVER
 
-**Never use global variables for configuration.** Everything related to experiment configuration belongs in a config object.
+**Never use global variables.** Not for directories, loggers, prompt names, or "constants" that vary between runs. Global state destroys reproducibility. Pass everything through config objects.
 
 Structure configs with inheritance:
 - A top-level base config contains typical/global parameters (model name, max tokens, etc.)
 - Each experiment subclasses the base config and adds additional parameters as needed
 
-Use pydantic-settings with `cli_parse_args=True` for CLI argument parsing from BaseSettings subclasses.
-
-This keeps all experiment parameters explicit, traceable, and easy to modify per-experiment.
+Use pydantic-settings for CLI argument parsing: `class Config(BaseSettings, cli_parse_args=True)`.
 
 ### Config Passing
 
@@ -64,6 +61,8 @@ Never pass both a config object AND attributes extracted from that config. If yo
 
 These are anti-patterns that Claude tends to fall into. They lead to crappy code. NEVER NEVER NEVER do these:
 
+- **Hardcode fake data that looks real** - NEVER invent data that resembles real data. If you need example AI responses, sample outputs, or test data, it must come from actual sources (files, APIs, real outputs). Hardcoding plausible-looking fake data (e.g., "here's what a refusal looks like" with made-up text) completely invalidates any analysis. All data must be traceable to real sources.
+- **Magic values in function bodies** - Configuration values (model names, prompt names, thresholds, file paths, URLs) hardcoded inside functions instead of coming from config objects. These are impossible to override without editing code and easy to miss when reviewing experiment parameters. If a value could reasonably vary between runs or experiments, it belongs in a config object.
 - **Modify tests to make them pass** - If tests fail, fix the code, not the tests (unless the test itself is genuinely wrong)
 - **Add `# type: ignore`, `# noqa`, `# pylint: disable`** to silence errors instead of fixing them (unless explicitly instructed to by the user)
 - **Broad try/except blocks** that swallow errors to prevent crashes. Especially bad: `except Exception:` followed by `return False` or `return 0` — this makes errors look like valid "clean" results. If you can't determine an answer, return `None`, not a default that corrupts data.
@@ -79,6 +78,11 @@ These are anti-patterns that Claude tends to fall into. They lead to crappy code
 - **Remove `# AUDIT-OK` comments** - These comments mark code that has been reviewed and approved during scientific audits. They are critical for automated code review. Never remove them.
 - **Write prompts as Python strings** - All prompts and instructions for language models/classifiers must be in Jinja template files, not inline Python strings scattered throughout the code.
 - **Delete commented-out code** - Never delete it unless the user explicitly asks. Commented-out code (especially experiment configs) often serves as useful reference for past experiments or alternative approaches.
+- **Leave dead/stale code around** - Unused function parameters, config fields that nothing reads, variables that are set but never used. If code isn't being used, delete it. Dead code confuses readers and leaves the codebase in a state where names imply things that aren't true.
+- **Use `or` to substitute defaults for missing data** - Patterns like `value or 0`, `value or ""`, `value or []` hide missing data behind plausible defaults. Also `param = param or default` inside functions — this is just a sneaky default argument.
+- **Workarounds that paper over problems** - Don't add workarounds that hide the real problem.
+- **TODO comments that should have been addressed** - If a TODO is blocking correctness or is trivial to fix, just fix it.
+- **Overly clever code** - Write code that's easy to read and understand. Cleverness that obscures intent is a liability.
 
 ## Research Integrity
 
@@ -101,7 +105,6 @@ Examples of what NOT to do:
 - Use `.get(key, default)` to hide missing data ❌
 
 Instead:
-- Throw an error if required data is missing
-- **Let the code crash** — this is GOOD. Crashes are noticed immediately; invalid results from silent defaults can go undetected and corrupt your analysis.
+- **Let the code crash** — this is GOOD.
 - Use `None` only when the data is genuinely optional and you'll handle the None case explicitly
 - Log warnings about excluded/failed data points
