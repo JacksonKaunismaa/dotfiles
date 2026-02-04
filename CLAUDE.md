@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Note:** This is the project-specific CLAUDE.md for the dotfiles repo. There is a separate global CLAUDE.md at `config/CLAUDE.md` which contains instructions for research work (anti-patterns, default value rules, etc.). The `deploy.sh` script symlinks that file to `~/.claude/CLAUDE.md`.
+**Note:** This is the project-specific CLAUDE.md for the dotfiles repo. There is a separate global CLAUDE.md at `config/claude/CLAUDE.md` which contains instructions for research work (anti-patterns, default value rules, etc.). The `deploy.sh` script symlinks that file to `~/.claude/CLAUDE.md`.
 
 ## Overview
 

@@ -54,7 +54,18 @@ fi
 
 # Claude Code config
 mkdir -p $HOME/.claude
-ln -sf $DOT_DIR/config/CLAUDE.md $HOME/.claude/CLAUDE.md
+ln -sf $DOT_DIR/config/claude/CLAUDE.md $HOME/.claude/CLAUDE.md
+# Remove existing directories/symlinks before creating new symlinks
+# (ln -sf doesn't replace directories, only files)
+rm -rf $HOME/.claude/hooks $HOME/.claude/skills
+ln -s $DOT_DIR/config/claude/hooks $HOME/.claude/hooks
+ln -s $DOT_DIR/config/claude/skills $HOME/.claude/skills
+# Generate settings.json with correct home path
+sed "s|__HOME__|$HOME|g" $DOT_DIR/config/claude/settings.json.template > $HOME/.claude/settings.json
+# Copy ntfy.conf if it exists (not symlinked due to credentials)
+if [ -f "$DOT_DIR/config/claude/ntfy.conf" ]; then
+    cp $DOT_DIR/config/claude/ntfy.conf $HOME/.claude/ntfy.conf
+fi
 echo "deployed Claude Code config"
 
 # zshrc setup
