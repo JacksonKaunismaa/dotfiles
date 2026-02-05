@@ -6,6 +6,9 @@ Supports two modes:
 
 - "inspect": Flat directory for Inspect AI evals, config stored in .eval file
   results/{experiment_name}/{git_hash}_{variant_name}_{id}.eval
+
+Copy both this file and experiment_config.py to your project.
+Adjust the import below to match your project's package name.
 """
 
 import argparse
@@ -23,10 +26,12 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Generic, Literal, TypeVar, Union, get_args, get_origin
 
-from pydantic_settings import BaseSettings
+# Adjust this import to match your project's package name
+from myproject.experiment_config import CLI_NONE_SENTINEL, BaseExperimentConfig
 
 
-C_co = TypeVar("C_co", bound=BaseSettings, covariant=True)
+# TypeVar for ExperimentCase - bound to BaseExperimentConfig for better type safety
+C_co = TypeVar("C_co", bound=BaseExperimentConfig, covariant=True)
 
 
 @dataclass(frozen=True)
@@ -38,12 +43,11 @@ class ExperimentCase(Generic[C_co]):
     The config contains actual experiment parameters that the entry point uses.
 
     The type parameter is covariant because ExperimentCase only reads the config (frozen).
-    This allows passing Sequence[ExperimentCase[MyConfig]] where Sequence[ExperimentCase[BaseSettings]] is expected.
+    This allows passing Sequence[ExperimentCase[MyConfig]] where Sequence[ExperimentCase[BaseExperimentConfig]] is expected.
     """
 
     variant_name: str
     config: C_co
-
 
 
 
@@ -64,12 +68,6 @@ def _get_git_hash() -> str:
 def _get_timestamp() -> str:
     """Get current timestamp in a filesystem-friendly format."""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-# Sentinel for representing None in CLI args.
-# CLI args are strings, so we use this to represent None.
-# Base config must have a validator that converts this back to None.
-CLI_NONE_SENTINEL = "__none__"
 
 
 def _is_dict_type(annotation: Any) -> bool:
@@ -151,7 +149,7 @@ def _run_single(
 
 
 def run_experiments(
-    cases: Sequence[ExperimentCase[BaseSettings]],
+    cases: Sequence[ExperimentCase[BaseExperimentConfig]],
     entry_point: str,
     experiment_name: str,
     parallelism: int | None = None,
@@ -271,7 +269,7 @@ def run_experiments(
 
 
 def run_experiments_cli(
-    cases: Sequence[ExperimentCase[BaseSettings]],
+    cases: Sequence[ExperimentCase[BaseExperimentConfig]],
     entry_point: str,
     experiment_name: str,
     mode: Literal["standard", "inspect"] = "standard",
