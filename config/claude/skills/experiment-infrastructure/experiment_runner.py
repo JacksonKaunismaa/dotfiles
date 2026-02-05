@@ -1,4 +1,4 @@
-"""Generic experiment runner - no dependencies on specific configs or entry points.
+"""Experiment runner for pydantic-settings configs.
 
 Supports two modes:
 - "standard": Nested directories, runner saves config.json
@@ -14,23 +14,19 @@ import os
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from types import UnionType
+from typing import Any, Generic, Literal, TypeVar, Union, get_args, get_origin
+
+from pydantic_settings import BaseSettings
 
 
-@runtime_checkable
-class ExperimentConfig(Protocol):
-    """Protocol for experiment configs. Must support serialization."""
-
-    def model_dump(self) -> dict[str, Any]: ...
-
-
-C_co = TypeVar("C_co", bound=ExperimentConfig, covariant=True)
+C_co = TypeVar("C_co", bound=BaseSettings, covariant=True)
 
 
 @dataclass(frozen=True)
@@ -42,22 +38,13 @@ class ExperimentCase(Generic[C_co]):
     The config contains actual experiment parameters that the entry point uses.
 
     The type parameter is covariant because ExperimentCase only reads the config (frozen).
-    This allows passing Sequence[ExperimentCase[MyConfig]] where Sequence[ExperimentCase[ExperimentConfig]] is expected.
+    This allows passing Sequence[ExperimentCase[MyConfig]] where Sequence[ExperimentCase[BaseSettings]] is expected.
     """
 
     variant_name: str
     config: C_co
 
 
-@dataclass
-class ExperimentResult:
-    """Result of running a single experiment."""
-
-    output_dir: str
-    success: bool
-    return_code: int
-    stdout: str
-    stderr: str
 
 
 def _get_git_hash() -> str:
@@ -85,11 +72,34 @@ def _get_timestamp() -> str:
 CLI_NONE_SENTINEL = "__none__"
 
 
-def _config_to_args(config_dict: dict[str, Any]) -> list[str]:
+def _is_dict_type(annotation: Any) -> bool:
+    """Check if a type annotation is or contains a dict type."""
+    # Direct dict class (e.g., dict, Mapping)
+    if annotation is dict or annotation is Mapping:
+        return True
+
+    origin = get_origin(annotation)
+
+    # Parameterized dict type (e.g., dict[str, int])
+    if origin in (dict, Mapping):
+        return True
+
+    # Union type (e.g., dict | None) - check if any member is dict
+    if origin is Union or isinstance(annotation, UnionType):
+        return any(_is_dict_type(arg) for arg in get_args(annotation))
+
+    return False
+
+
+def _config_to_args(config_dict: dict[str, Any], field_types: dict[str, Any]) -> list[str]:
     """Convert a config dict to CLI arguments.
 
     Uses underscores (--output_dir) to match pydantic-settings convention.
     None values are passed as CLI_NONE_SENTINEL string.
+
+    Args:
+        config_dict: The config values to serialize
+        field_types: Mapping of field names to their type annotations
     """
     args = []
 
@@ -97,14 +107,19 @@ def _config_to_args(config_dict: dict[str, Any]) -> list[str]:
         cli_key = f"--{key}"  # pydantic-settings uses underscores
 
         if value is None:
+            # Dict fields with None cannot be serialized through CLI args
+            field_type = field_types.get(key)
+            if field_type is not None and _is_dict_type(field_type):
+                raise ValueError(
+                    f"Cannot pass None for dict field '{key}' through CLI args "
+                    f"(pydantic-settings does not support this). "
+                    f"Remove this field from copy_with() to use the class default."
+                )
             args.append(cli_key)
             args.append(CLI_NONE_SENTINEL)
             continue
 
-        if isinstance(value, bool):
-            args.append(cli_key)
-            args.append(str(value).lower())  # "true" or "false"
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             args.append(cli_key)
             args.append(json.dumps(value))
         elif isinstance(value, list):
@@ -127,32 +142,23 @@ def _config_to_args(config_dict: dict[str, Any]) -> list[str]:
 def _run_single(
     entry_point: str,
     cli_args: list[str],
-    output_dir: str,
     env: dict[str, str] | None = None,
-) -> ExperimentResult:
-    """Run a single experiment in a subprocess."""
+) -> tuple[bool, str]:
+    """Run a single experiment in a subprocess. Returns (success, stderr)."""
     cmd = [sys.executable, entry_point, *cli_args]
-
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-
-    return ExperimentResult(
-        output_dir=output_dir,
-        success=result.returncode == 0,
-        return_code=result.returncode,
-        stdout=result.stdout,
-        stderr=result.stderr,
-    )
+    return result.returncode == 0, result.stderr
 
 
 def run_experiments(
-    cases: Sequence[ExperimentCase[ExperimentConfig]],
+    cases: Sequence[ExperimentCase[BaseSettings]],
     entry_point: str,
     experiment_name: str,
     parallelism: int | None = None,
     dry_run: bool = False,  # AUDIT-OK: infra-default - dry_run is infrastructure, not experimental parameter
     resume_dir: str | None = None,  # AUDIT-OK: infra-default - resume_dir is infrastructure, not experimental parameter
     mode: Literal["standard", "inspect"] = "standard",  # AUDIT-OK: infra-default - mode is infrastructure
-) -> list[ExperimentResult]:
+) -> None:
     """
     Run experiments in parallel with process isolation.
 
@@ -210,7 +216,7 @@ def run_experiments(
                 print(f"  {case.variant_name} -> {output_dir}/{git_hash}_{case.variant_name}_*.eval")
             else:
                 print(f"  {case.variant_name} -> {output_dir}")
-        return []
+        return
 
     # Create directories
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -228,13 +234,18 @@ def run_experiments(
     print(f"Running {len(cases)} experiments ({mode} mode, parallelism={effective_parallelism})")
     print(f"Run directory: {run_dir}")
 
-    results: list[ExperimentResult] = []
+    successes = 0
 
     with ThreadPoolExecutor(max_workers=effective_parallelism) as executor:
         futures = {}
         for case, output_dir in zip(cases, output_dirs):
             config_dict = {**case.config.model_dump(), "output_dir": output_dir}
-            cli_args = _config_to_args(config_dict)
+            # Extract field types from pydantic model for dict-None detection
+            field_types = {
+                name: field.annotation
+                for name, field in case.config.model_fields.items()
+            }
+            cli_args = _config_to_args(config_dict, field_types)
 
             if mode == "standard":
                 env = None
@@ -242,34 +253,29 @@ def run_experiments(
                 env = os.environ.copy()
                 env["INSPECT_EVAL_LOG_FILE_PATTERN"] = f"{git_hash}_{case.variant_name}_{{id}}"
 
-            future = executor.submit(
-                _run_single, entry_point, cli_args, output_dir, env
-            )
+            future = executor.submit(_run_single, entry_point, cli_args, env)
             futures[future] = case.variant_name
 
         for future in as_completed(futures):
             variant_name = futures[future]
-            result = future.result()
-            results.append(result)
+            success, stderr = future.result()
 
-            status = "OK" if result.success else "FAILED"
-            print(f"[{status}] {variant_name}")
+            if success:
+                successes += 1
+                print(f"[OK] {variant_name}")
+            else:
+                print(f"[FAILED] {variant_name}")
+                print(stderr)
 
-            if not result.success:
-                print(result.stderr)
-
-    successes = sum(r.success for r in results)
-    print(f"\nCompleted: {successes}/{len(results)} succeeded")
-
-    return results
+    print(f"\nCompleted: {successes}/{len(cases)} succeeded")
 
 
 def run_experiments_cli(
-    cases: Sequence[ExperimentCase[ExperimentConfig]],
+    cases: Sequence[ExperimentCase[BaseSettings]],
     entry_point: str,
     experiment_name: str,
     mode: Literal["standard", "inspect"] = "standard",
-) -> list[ExperimentResult]:
+) -> None:
     """Entry point for suite files - parses CLI args automatically.
 
     Args:
@@ -278,12 +284,9 @@ def run_experiments_cli(
         experiment_name: Name for this experiment
         mode: "standard" for nested dirs + config.json, "inspect" for flat dir + .eval files
     """
-    if not cases:
-        raise ValueError("No cases provided")
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="Print experiments without running")
-    parser.add_argument("-p", "--parallelism", type=int, default=1, help="Number of experiment configs to run concurrently")
+    parser.add_argument("-p", "--parallelism", type=int, default=None, help="Number of configs to run concurrently (default: all)")
     if mode == "standard":
         parser.add_argument("--resume", type=str, metavar="RUN_DIR", help="Resume from existing run directory")
     args = parser.parse_args()

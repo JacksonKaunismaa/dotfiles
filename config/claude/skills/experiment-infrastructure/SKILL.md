@@ -91,6 +91,7 @@ class BaseExperimentConfig(BaseSettings):
     model_config = SettingsConfigDict(
         cli_parse_args=True,
         cli_ignore_unknown_args=True,  # So suite can use --dry-run, --resume, etc.
+        frozen=True,  # Configs are immutable once created
     )
 
     output_dir: str = ""  # Runner fills this via CLI
@@ -103,24 +104,31 @@ class BaseExperimentConfig(BaseSettings):
 
         CLI args are strings, so None values are passed as a sentinel string.
         This validator converts them back to Python None.
+
+        For list types, pydantic-settings wraps the CLI arg in a list before
+        validation, so we also check for [sentinel].
         """
         if v == CLI_NONE_SENTINEL:
+            return None
+        if isinstance(v, list) and v == [CLI_NONE_SENTINEL]:
             return None
         return v
 
     def copy_with(self, **updates: Any) -> Self:
-        """Use this instead of model_copy() - validates field names, catches typos."""
+        """Create a copy with updated fields. Use this instead of model_copy()."""
         if "output_dir" in updates:
             raise ValueError("output_dir is set by experiment_runner, not suite files")
         return self.__class__.model_validate({**self.model_dump(), **updates})
 
     def model_copy(self, *args: Any, **kwargs: Any) -> Self:
-        raise NotImplementedError("Use copy_with() instead - it validates field names")
+        raise NotImplementedError("Use copy_with() instead")
 ```
 
 **Why `output_dir` is protected:** The runner computes `output_dir` from `variant_name` + `experiment_name` + timestamp + git hash. Suite files should never set it directly — attempting to do so via `copy_with()` raises an error.
 
 **Why `_convert_none_sentinel` is required:** CLI args are strings, so there's no native way to represent `None`. Without this validator, if you set `field=None` in a suite file, the runner would skip that arg, and pydantic-settings would use the class default instead — a silent bug. The runner passes `None` values as a sentinel string (`"__none__"`), and this validator converts them back to Python `None`.
+
+**Limitation — dict fields with None:** Dict fields (e.g., `metadata: dict[str, str] | None`) cannot have `None` passed through CLI args (pydantic-settings limitation). The runner will raise an error if you try. To use `None` for a dict field, omit it from `copy_with()` and let the class default apply.
 
 Experiment-specific configs inherit from base:
 
@@ -186,6 +194,8 @@ Suite files define experiment cases (variant name + config) and invoke the runne
 
 `ExperimentCase` separates infrastructure metadata (`variant_name`) from experiment parameters (`config`). This keeps configs focused on experiment parameters and avoids type-checking issues with pydantic-settings CLI parsing.
 
+**Variant names must be unique** — the runner raises an error if duplicate `variant_name` values are found.
+
 ```python
 # experiments/my-experiment/suite_my_experiment.py
 from myproject.config_my_experiment import MyExperimentConfig
@@ -221,7 +231,7 @@ if __name__ == "__main__":
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Show what would run without running |
-| `-p N`, `--parallelism N` | Run N configs in parallel (default: 1) |
+| `-p N`, `--parallelism N` | Run N configs in parallel (default: all) |
 | `--resume RUN_DIR` | Resume from existing run directory (standard mode only) |
 
 ### Basic Usage
@@ -230,19 +240,22 @@ if __name__ == "__main__":
 # Always dry-run first
 python experiments/my-experiment/suite_my_experiment.py --dry-run
 
-# Run with 4 parallel workers
-python experiments/my-experiment/suite_my_experiment.py -p 4
+# Run (all cases in parallel by default)
+python experiments/my-experiment/suite_my_experiment.py
+
+# Limit to 2 parallel workers (e.g., for rate-limited APIs)
+python experiments/my-experiment/suite_my_experiment.py -p 2
 ```
 
 ### Resuming Failed Runs (Standard Mode)
 
 ```bash
 # First run - some experiments fail
-python experiments/my-experiment/suite_my_experiment.py -p 4
+python experiments/my-experiment/suite_my_experiment.py
 # Output shows: results/my-experiment/20260128_143052_a1b2c3d/
 
 # Fix the issue, then resume
-python experiments/my-experiment/suite_my_experiment.py -p 4 \
+python experiments/my-experiment/suite_my_experiment.py \
     --resume results/my-experiment/20260128_143052_a1b2c3d
 ```
 
@@ -255,3 +268,4 @@ The runner reuses the directory; entry points must check for existing results an
 - **`--dry-run` first** — Always verify where results will go before running
 - **Entry points handle idempotency** — For resume to work, entry points must skip already-completed work
 - **Git hash for reproducibility** — In directory name (standard) or filename (inspect)
+- **Enum fields** — Serialized using `.value` when passed through CLI args

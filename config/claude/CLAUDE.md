@@ -35,6 +35,7 @@ If `**/Config.py` returns nothing, also try `**/config.py`.
 
 ## Best Practices
 
+- **GitHub operations**: Always use `gh` CLI for PRs, issues, and GitHub API queries
 - **CSV files**: Always use pandas (`pd.read_csv()`), never `csv.DictReader`
 - **Prompts**: Always use Jinja templates, never inline Python strings. Even short prompts. All formatting should be done in Jinja, not Python.
 - **Model inference**: Always use Inspect or Safety Tooling for model calls, never raw OpenAI/Anthropic clients. These frameworks handle logging, retries, and structured outputs consistently.
