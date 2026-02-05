@@ -54,6 +54,7 @@ fish_add_path $HOME/bin $HOME/.local/bin $HOME/.cargo/bin
 
 # Environment variables
 set -gx EDITOR vim
+set -gx LESSCHARSET utf-8
 set -gx GREP_COLORS "ms=01;31:mc=01;31:sl=:cx=:fn=36:ln=32:bn=32:se=36"
 
 # Set file descriptor limit

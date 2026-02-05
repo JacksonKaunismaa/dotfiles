@@ -65,6 +65,9 @@ let g:pymode_python = 'python3'
 " global config in 4.0.0. Also the config file is ~/.config/pycodestyle
 let g:syntastic_python_checkers=["pyflakes", "pycodestyle", "python3"]
 
+set encoding=utf-8
+set ambiwidth=single
+
 syntax on
 set background=dark
 colorscheme gruvbox
