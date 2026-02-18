@@ -39,6 +39,7 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
     fi
 
     START_TIME=$(cat "$TIMESTAMP_FILE")
+    [ -z "$START_TIME" ] && exit 0
     NOW=$(date +%s)
     ELAPSED_SECS=$((NOW - START_TIME))
     ELAPSED_MINS=$((ELAPSED_SECS / 60))

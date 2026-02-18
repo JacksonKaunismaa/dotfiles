@@ -13,11 +13,13 @@ alias hn="hostname"
 
 alias cl="clear"
 
-# file and directories
-alias rm='rm -i'
+# file and directories (-i only in real terminal sessions, not automation)
+if [ -t 0 ]; then
+  alias rm='rm -i'
+  alias cp='cp -i'
+  alias mv='mv -i'
+fi
 alias rmd='rm -rf'
-alias cp='cp -i'
-alias mv='mv -i'
 alias mkdir='mkdir -p'
 
 # find/read files

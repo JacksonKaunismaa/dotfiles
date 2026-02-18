@@ -19,6 +19,22 @@ Report findings first. Do NOT automatically fix issues — wait for the user to 
 2. Launch subagents in parallel using the Task tool to read files and check for the patterns below. Every file should be read.
 3. As a final step, grep for the patterns to make sure you didn't miss anything
 
+## IMPORTANT: Precision over recall
+
+**Prefer high precision over high recall.** It is much better to report 5 real issues than 10 issues where 3 are false positives. False positives waste the user's time and erode trust in the audit.
+
+Before reporting any finding, subagents must **try hard to verify their claims with hard evidence**:
+- Read the actual code and confirm the pattern exists — don't flag based on heuristics or suspicion
+- Go beyond pattern matching: look for concrete evidence that the issue matters. For example, if flagging a broad `try/except`, check logs or past results to see if it's actually swallowing real errors. This grounds recommendations in reality rather than theory.
+- If you tried extensively to verify whether a finding is real but couldn't find hard evidence either way, still report it — but say so explicitly (e.g., "I was unable to find concrete evidence of this causing problems, but the pattern is risky because...")
+
+## Scope: source code only
+
+The audit covers **source code only**. Skip the following:
+- **Suite files** (`suite_*.py`) — these are experiment configuration/runner files, not source code
+- **Scratch/temporary directories** — any directory named `scratch/`, `tmp/`, `temp/`, or similar throwaway code areas
+- **Test files** are in scope (bugs in tests affect validity), but suite files are not
+
 ## Patterns to search for
 
 ### Critical severity
@@ -70,6 +86,13 @@ The patterns above are not exhaustive. Also flag code that seems hacky or sloppy
 - Overly clever code that's hard to follow
 - Any code where you think "a senior engineer would not write this"
 
+## Known exceptions — always skip silently
+
+These patterns look like audit violations but are legitimate. **Do not flag them**, even without `# AUDIT-OK` markers.
+
+- **`load_dotenv()`** — Loading environment variables from `.env` files is standard practice for secrets management. It looks like global state mutation, but it's the correct way to configure credentials and API keys without hardcoding them. Skip any `load_dotenv()` calls and related `dotenv` imports.
+- **Modal compute decorator literals** — Modal's `@app.function(gpu="A100")`, `@app.cls(gpu="H100")`, `image=modal.Image...`, and similar decorator arguments require literal strings/values. These decorators are evaluated at import time before any config system runs, and Modal's API has no mechanism for dynamic configuration here. Skip hardcoded strings inside Modal decorator arguments (gpu types, image definitions, timeout values, container specs, etc.).
+
 ## Previously audited code
 
 Lines marked with `# AUDIT-OK` have been reviewed and approved by the user. **Skip these silently** — do not flag them, list them, or mention them in your summary. The user already knows what they approved. (Exception: if the user requests a **re-audit**, ignore these markers and re-evaluate everything.)
@@ -107,8 +130,11 @@ This allows future audits to skip known exceptions while still catching new viol
 
 ## Output format
 
-Report findings ranked by severity. For each finding, provide ENOUGH CONTEXT for someone unfamiliar with the code to understand the problem. **Assume the user does not have the code open** — your report must be fully understandable on its own.
+**Number findings sequentially: 1, 2, 3, 4, 5, 6...** Do NOT use category prefixes like C1, C2, M1, M2. Just plain sequential integers across all severity levels. Group by severity, but the numbering is a single flat sequence.
 
+For each finding, provide ENOUGH CONTEXT for someone unfamiliar with the code to understand the problem. **Assume the user does not have the code open** — your report must be fully understandable on its own.
+
+- **Finding number and severity** (e.g., "**1. [Critical]**")
 - **File path and line number**
 - **Pipeline context** — A full paragraph explaining: What part of the system is this? (e.g., "data ingestion", "model training", "result export", "API endpoint") What does this module/file do in the broader architecture? How does data flow into and out of this component? What depends on its output? Be thorough — this context is essential both for the user to understand the finding and for you to verify whether the pattern is actually problematic or legitimate in this context.
 - **Function role** — What is this specific function responsible for? What calls it, and what does it produce?

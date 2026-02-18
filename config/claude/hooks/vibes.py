@@ -90,12 +90,26 @@ def strip_noise(text: str) -> str:
     return text
 
 
-def _has_positive_context(text: str) -> bool:
-    """Check if text has positive/amazement words near ????-runs."""
-    return bool(re.search(
-        r"\b(fast|instant|quick|nice|good|great|amazing|impressive|wow|damn)\b",
-        text, re.I,
-    ))
+_POSITIVE_CONTEXT_RE = re.compile(
+    r"\b(instant|quick|nice|good|great|amazing|impressive|wow|damn)\b", re.I,
+)
+
+
+def _has_positive_context_near_qmarks(text: str, max_word_distance: int = 8) -> bool:
+    """Check if positive/amazement words appear near ????-runs (within N words).
+
+    "fast" removed — too ambiguous (speed can be good or bad).
+    Proximity matters: "wow??????????" is amazement,
+    but "sandbagging????????????????? ... really fast" is not.
+    """
+    for qm_match in re.finditer(r"\?{4,}", text):
+        # Grab words before and after the ???? run
+        before = text[:qm_match.start()].split()[-max_word_distance:]
+        after = text[qm_match.end():].split()[:max_word_distance]
+        window = " ".join(before + after)
+        if _POSITIVE_CONTEXT_RE.search(window):
+            return True
+    return False
 
 
 def classify(prompt: str) -> str:
@@ -106,12 +120,23 @@ def classify(prompt: str) -> str:
     alpha_count = len(alpha_chars)
     caps_ratio = len(upper_chars) / max(alpha_count, 1)
 
-    # ── "wtf is X?" = confused, not frustrated ──────────────────
+    # ── Early confused returns (checked before frustrated) ──────
     # "wtf is [noun]?" = bewilderment. But "wtf are we doing" = frustration.
-    # Only match "wtf is/was" + a noun-like word, not "wtf are we [verb]ing".
+    # "wtf is this [insult]" = frustrated at bad code, not bewildered.
     if re.search(r"\bwtf\s+(?:is|was)\s+[\"']?\w", text, re.I):
-        if not re.search(r"\?{4,}", text) and alpha_count < 100:
+        # "wtf is this X nonsense/crap" = frustrated at bad code, not bewildered
+        # Use loose match — insult word anywhere nearby, not just immediately after
+        if re.search(r"\bwtf\s+(?:is|was)\s+(?:this|that)\b", text, re.I) \
+           and re.search(r"\b(nonsense|crap|shit|garbage|bs|mess|junk)\b", text, re.I):
+            pass  # Fall through to frustrated — criticizing bad code
+        elif not re.search(r"\?{4,}", text) and alpha_count < 100:
             return "confused"
+    # "what the hell does X mean" = confused about terminology, not anger
+    if re.search(r"\bwhat the (?:hell|fuck|heck)\s+(?:does|did|is|was)\s+\w+\s+mean\b", text, re.I):
+        return "confused"
+    # "wdym X????" = confused disbelief, not frustrated ????-runs
+    if re.search(r"\bwdym\b", text, re.I) and re.search(r"\?{4,}", text):
+        return "confused"
 
     # ── Frustrated detection ────────────────────────────────────
     frust_score = 0.0
@@ -120,7 +145,7 @@ def classify(prompt: str) -> str:
     has_long_qmarks = bool(re.search(r"\?{4,}", text))
     if has_long_qmarks:
         # ????-runs near positive words = amazement, not frustration!
-        if _has_positive_context(text) and frust_score < 1.0:
+        if _has_positive_context_near_qmarks(text) and frust_score < 1.0:
             pass  # Skip — this is excited amazement
         else:
             frust_score += 3.0
@@ -129,7 +154,7 @@ def classify(prompt: str) -> str:
         upper_text = " ".join(w for w in text.split() if w.isupper() and len(w) > 2)
         if not re.search(r"\b(EXCELLENT|PERFECT|AMAZING|YES|NICE)\b", upper_text):
             frust_score += 3.0
-    if re.search(r"\b(wtf|what the fuck|what the hell)\b", text, re.I):
+    if re.search(r"\b(wtf|what the fuck|what the hell|how the hell)\b", text, re.I):
         frust_score += 2.5
     if re.search(r"\b(ugh+|argh+|aghh+)\b", text, re.I):
         frust_score += 2.0
@@ -145,19 +170,26 @@ def classify(prompt: str) -> str:
         frust_score += 1.5
     if re.search(r"\b(hacky|clumsy|cursed|insane|terrible|horrible|disgusting)\b", text, re.I):
         frust_score += 0.7
-    if re.search(r"\bstop\b\s+(?:doing|making|adding|hacking)", text, re.I):
+    # "stop [doing/making/wrong]" or standalone "bro stop" = imperative frustration
+    if re.search(r"\bstop\b\s+(?:doing|making|adding|hacking|wrong)", text, re.I):
         frust_score += 1.5
-    if re.search(r"\b(wrong|broken|bugged|stupid)\b", text, re.I):
+    elif re.search(r"\b(?:bro|dude)\s+stop\b|\bstop\s+(?:bro|dude)\b", text, re.I):
+        frust_score += 1.5
+    if re.search(r"\b(wrong|broken|broke|bugged|stupid)\b", text, re.I):
         frust_score += 1.0
     if re.search(r"\b(hack|hacking)\b", text, re.I):
-        frust_score += 0.7
+        frust_score += 1.0
+    if re.search(r"\bbs\b", text, re.I):
+        frust_score += 1.5
+    if re.search(r"\btold\s+you\b", text, re.I):
+        frust_score += 1.0
 
     # From LLM validation: mild frustration keywords
     if re.search(r"\bsucks?\b", text, re.I):
         frust_score += 2.0
     if re.search(r"\bcompletely\s+wrong\b", text, re.I):
         frust_score += 2.0
-    if re.search(r"\bare\s+we\s+serious\b", text, re.I):
+    if re.search(r"\bare\s+(?:we|you)\s+(?:serious|for\s+real)\b", text, re.I):
         frust_score += 2.0
     if re.search(r"\bdid\s+you\s+even\s+listen\b", text, re.I):
         frust_score += 2.0
@@ -165,6 +197,70 @@ def classify(prompt: str) -> str:
         frust_score += 1.5
     if re.search(r"\bdid\s+not\s+just\b|\bu\s+did\s+not\s+just\b", text, re.I):
         frust_score += 1.5
+    if re.search(r"\bpissed\b", text, re.I):
+        frust_score += 2.0
+    if re.search(r"\bridiculous\b", text, re.I):
+        frust_score += 1.5
+    if re.search(r"\b(?:this|that|it)\s+is\s+so\s+bad\b", text, re.I):
+        frust_score += 1.5
+    if re.search(r"\bmaking\s+(?:shit|stuff|things)\s+up\b", text, re.I):
+        frust_score += 2.0
+    # Broaden "false" pattern — "all of these are false", "this stuff is false"
+    if re.search(r"\b(?:are|is)\s+false\b", text, re.I):
+        frust_score += 1.5
+    if re.search(r"\bdear\s+god\b|\bmy\s+gosh\b", text, re.I):
+        frust_score += 1.0
+    if re.search(r"\bso\s+bad\b", text, re.I):
+        frust_score += 1.0
+
+    # "not what I meant/said" = frustrated at being misunderstood
+    if re.search(r"\bnot\s+what\s+(?:i|I)\s+(?:meant|said)\b", text, re.I):
+        frust_score += 2.0
+    # "you/u didn't even [X]" = accusation of laziness (strong)
+    if re.search(r"\b(?:you|u|ya)\s+didn'?t\s+even\b", text, re.I):
+        frust_score += 1.5
+    # "you/u didn't [read/check/listen/look]" without "even" = milder accusation
+    elif re.search(r"\b(?:you|u|ya)\s+didn'?t\s+(?:read|check|listen|look|bother)\b", text, re.I):
+        frust_score += 1.0
+    # "u didnt bro" / "u didnt [anything]" = frustrated shorthand
+    elif re.search(r"\b(?:you|u)\s+didn'?t\b", text, re.I) and re.search(r"\b(bro|dude|man)\b", text, re.I):
+        frust_score += 1.0
+    # "you/u keep [doing X]" = frustrated at repeated mistakes
+    if re.search(r"\b(?:you|u)\s+keep\b", text, re.I):
+        frust_score += 1.0
+    # "how many times" = exasperation at repeating yourself
+    if re.search(r"\bhow\s+many\s+times\b", text, re.I):
+        frust_score += 2.0
+    # "come on" = exasperation
+    if re.search(r"\bcome\s+on\b", text, re.I):
+        frust_score += 1.5
+    # "what did we/I say about" = referencing prior agreement that was violated
+    if re.search(r"\bwhat\s+did\s+(?:we|I|i)\s+say\b", text, re.I):
+        frust_score += 1.5
+    # "not what it should [say/be/do]" = frustrated at wrong output
+    if re.search(r"\bnot\s+what\s+it\s+should\b", text, re.I):
+        frust_score += 1.0
+    # "I just said" = frustrated at being ignored
+    if re.search(r"\bi\s+(?:just|literally)\s+said\b", text, re.I):
+        frust_score += 1.5
+    # "this is terrible" — boost "terrible" when emphatic
+    if re.search(r"\b(?:this|that)\s+is\s+terrible\b", text, re.I):
+        frust_score += 1.5
+    # "a lie" / "is a lie" = frustrated at AI confabulation
+    if re.search(r"\ba\s+lie\b", text, re.I):
+        frust_score += 1.5
+    # "why did you [X]" = questioning AI's unwanted action
+    if re.search(r"\bwhy\s+did\s+(?:you|u)\b", text, re.I):
+        frust_score += 1.0
+    # "Yo, hello?" = calling out being ignored
+    if re.search(r"\byo,?\s+hello\b", text, re.I):
+        frust_score += 1.5
+    # "seriously" = disbelief at bad output
+    if re.search(r"\bseriously\b", text, re.I):
+        frust_score += 0.7
+    # "y/why didn't you/u [listen/read]" = frustrated at AI not following
+    if re.search(r"\b(?:why|y)\s+didn'?t\s+(?:you|u)\b", text, re.I):
+        frust_score += 1.0
 
     # Amplifiers — MUST come after all score accumulation
     if re.search(r"\bnah\b", text, re.I) and frust_score >= 0.5:
@@ -172,6 +268,13 @@ def classify(prompt: str) -> str:
     # "bro"/"dude" amplify existing frustration but aren't signals on their own
     if re.search(r"\b(bro|dude)\b", text, re.I) and frust_score >= 1.0:
         frust_score += 0.5
+    # "obviously" amplifies mild frustration — "obviously a hack" vs neutral "obviously"
+    if re.search(r"\bobviously\b", text, re.I) and frust_score >= 0.5:
+        frust_score += 0.5
+
+    # Humor/amusement deflates frustration — "insane" + "hilarious" = amused, not angry
+    if re.search(r"\b(hilarious|lmao|lol|haha+|heh)\b", text, re.I) and frust_score > 0:
+        frust_score = max(frust_score - 1.5, 0)
 
     if frust_score >= 2.0:
         return "frustrated"
@@ -180,34 +283,70 @@ def classify(prompt: str) -> str:
     excite_score = 0.0
 
     positive_words = re.findall(
-        r"\b(cool|nice|awesome|excellent|perfect|sweet|sick|amazing|wow|bang|great)\b",
+        r"\b(cool|nice|awesome|excellent|perfect|sweet|sick|amazing|wow|bang|great"
+        r"|beautiful|brilliant|impressive|impressed|clever|incredible|smart|funny)\b",
         text, re.I,
     )
     excite_score += len(positive_words) * 1.0
 
     if re.search(r"thanks?!", text, re.I):
-        excite_score += 1.5
-    if re.search(r"!{2,}", text):
+        excite_score += 1.0  # reduced — "thanks!" alone shouldn't trigger excited
+    # Count total exclamation marks (not just consecutive) — two !'s across a
+    # message signals energy even if they're on separate sentences.
+    exclaim_count = text.count("!")
+    if exclaim_count >= 2:
         excite_score += 1.0
-    if re.search(r"\b(love\s+it|lets?\s+go!|hell\s+yeah|lets?\s+do\s+(?:it|this))\b", text, re.I):
+    # "lets do it/this" requires ! — without it, it's just agreement ("sure, lets do it")
+    if re.search(r"\b(love\s+it|i\s+love|lets?\s+go\s*!|hell\s+yeah|lets?\s+do\s+(?:it|this)\s*!)", text, re.I):
+        excite_score += 1.5
+    if re.search(r"\b(?:so|too|way\s+too)\s+fun\b", text, re.I):
+        excite_score += 1.5
+    # Positive profanity: "holy shit that works", "holy fuck this is good"
+    if re.search(r"\bholy\s+(?:shit|fuck|crap)\b", text, re.I):
+        excite_score += 2.0
+    # "worked!" / "works!" with exclamation = excited about success
+    # Without !, "it works for bools" / "test if it works" = neutral factual
+    if re.search(r"\bwork(?:s|ed)\s*!", text, re.I):
+        excite_score += 1.5
+    # Explicit praise: "proud of you", "well done", slang praise
+    if re.search(r"\b(proud\s+of|well\s+done|absolute\s+cinema)\b", text, re.I):
+        excite_score += 1.5
+    # Positive word + exclamation = stronger signal ("excellent!", "sick!", "Bang!")
+    if re.search(r"\b(?:cool|nice|awesome|excellent|perfect|sick|amazing|wow|bang|great|beautiful|brilliant)\s*!", text, re.I):
+        excite_score += 0.5
+    # "lmao" / "lol" amplify excitement (they deflate frustration but boost excitement)
+    if re.search(r"\b(lmao|lol)\b", text, re.I) and excite_score >= 0.5:
+        excite_score += 0.5
+    # Discovery/realization: "ohhh I see", "genuinely interesting/clever/smart"
+    if re.search(r"\bo{2,}h+\b", text, re.I) and excite_score >= 0.5:
+        excite_score += 1.0
+    if re.search(r"\b(?:genuinely|actually)\s+(?:really\s+)?(?:interesting|clever|smart|good|brilliant)\b", text, re.I):
         excite_score += 1.5
 
     # From LLM validation: slang excitement
-    if re.search(r"\bfire\b", text, re.I) and not re.search(r"\bfire\s+(?:up|wall|fox)", text, re.I):
+    # Allowlist approach — slang "fire" is predicative ("that's fire", "so fire")
+    # or standalone. Blocklisting literal nouns ("fire symbol", "fire alarm", ...)
+    # is a losing game since the literal noun set is unbounded.
+    if re.search(
+        r"\b(?:that'?s|this\s+is|it'?s|so|straight|pure)\s+fire\b",
+        text, re.I,
+    ):
         excite_score += 1.5
     if re.search(r"\bclean\s+af\b", text, re.I):
         excite_score += 2.0
     if re.search(r"\binsanely\s+good\b", text, re.I):
         excite_score += 2.0
-    # Elongated words: "daaaamn", "niiice", "siiiick"
-    if re.search(r"\b\w*(.)\1{3,}\w*\b", text) and re.search(r"\b(damn|nice|sick|cool|good|sweet)\b", text, re.I):
+    # Elongated positive words: "daaaamn", "niiice", "siiiick", "coooool"
+    # Must be the positive word itself that's elongated — generic elongation
+    # ("waaaay") + distant positive word ("nice") is too loose.
+    if re.search(r"\b(da{2,}mn|ni{2,}ce|si{2,}ck|co{3,}l|go{3,}d|swe{3,}t|ye+s{2,})\b", text, re.I):
         excite_score += 1.5
     # "damn" + positive word = excitement, not just profanity
-    if re.search(r"\bdamn\b", text, re.I) and re.search(r"\b(nice|good|great|clean|fire)\b", text, re.I):
+    if re.search(r"\bdamn\b", text, re.I) and re.search(r"\b(nice|good|great|clean|fire|sick|cool|smart|clever)\b", text, re.I):
         excite_score += 1.5
 
     # ????-runs with positive context = amazement
-    if has_long_qmarks and _has_positive_context(text):
+    if has_long_qmarks and _has_positive_context_near_qmarks(text):
         excite_score += 2.0
 
     # "ok cool" only counts in VERY short messages — otherwise it's a transition word
@@ -219,6 +358,10 @@ def classify(prompt: str) -> str:
     if len(text.strip()) < 40 and excite_score >= 1.0:
         excite_score += 0.5
 
+    # "nice but [complaint]" = transition to feedback, not excitement
+    if re.search(r"\b(?:nice|good|great|cool|awesome)\s*[,.]?\s*but\b", text, re.I):
+        excite_score = max(excite_score - 1.5, 0)
+
     if excite_score >= 1.5:
         return "excited"
 
@@ -227,6 +370,9 @@ def classify(prompt: str) -> str:
 
     if re.search(r"(?:^|\.\s*)\s*wait\b", text, re.I):
         confuse_score += 1.5
+    # "wait what" = stronger confusion than just "wait"
+    if re.search(r"\bwait\s+what\b", text, re.I):
+        confuse_score += 1.0
     if re.search(r"\bi\s+don'?t\s+(?:understand|know|get|really)\b", text, re.I):
         confuse_score += 1.0
     if re.search(r"\bdon'?t\s+(?:really\s+)?know\s+what", text, re.I):
@@ -247,11 +393,13 @@ def classify(prompt: str) -> str:
         confuse_score += 1.5
 
     # "im confused" / "really confused" / "still confused" — explicit self-confusion
-    # (but NOT "you're confused" — telling Claude it's confused)
-    if re.search(r"\bi'?m\s+(?:\w+\s+)*confus", text, re.I):
+    # (but NOT "you're confused", and NOT "im confusing you" — apologizing)
+    if re.search(r"\bi'?m\s+(?:\w+\s+)*confused\b", text, re.I):
         confuse_score += 2.0
     elif re.search(r"\bconfus", text, re.I):
-        if not re.search(r"\byou(?:'re|\s+are)\s+(?:getting\s+)?confus", text, re.I):
+        # Exclude "you're confused" (telling AI) and "confusing you/u" (apologizing)
+        if not re.search(r"\byou(?:'re|\s+are)\s+(?:getting\s+)?confus", text, re.I) \
+           and not re.search(r"\bconfus\w*\s+(?:you|u|ya)\b", text, re.I):
             confuse_score += 1.0
     # "what do you mean" — also match "wdym" and "what do u mean"
     if re.search(r"\bwdym\b", text, re.I):
@@ -260,6 +408,18 @@ def classify(prompt: str) -> str:
     # Short "what??" messages = bewilderment
     if re.search(r"^\s*what\s*\?{2,}\s*$", text, re.I | re.M):
         confuse_score += 2.0
+
+    # Repeated "wait" = escalating confusion ("wait, wait, wait, wait")
+    wait_count = len(re.findall(r"\bwait\b", text, re.I))
+    if wait_count >= 3:
+        confuse_score += 2.0
+    # Repeated "what" + question marks = bewilderment
+    what_questions = len(re.findall(r"\bwhat\b[^.!]{0,20}\?", text, re.I))
+    if what_questions >= 2:
+        confuse_score += 1.0
+    # "tho right?" / "right?" at end = seeking confirmation of uncertain understanding
+    if re.search(r"\bright\s*\?\s*$", text, re.I):
+        confuse_score += 0.5
 
     # Lots of ellipses = thinking aloud (but raise threshold for long messages
     # since those are often voice-dictated and just naturally ellipsis-heavy)

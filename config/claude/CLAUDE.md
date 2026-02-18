@@ -35,6 +35,7 @@ If `**/Config.py` returns nothing, also try `**/config.py`.
 
 ## Best Practices
 
+- **No inline Python commands**: Never run complex Python via `python -c "..."` in Bash. Instead, write the script to a file using the Write tool, then execute it. Temporary/scratch scripts go in `./scratch/` if it exists, otherwise `/tmp/`.
 - **GitHub operations**: Always use `gh` CLI for PRs, issues, and GitHub API queries
 - **CSV files**: Always use pandas (`pd.read_csv()`), never `csv.DictReader`
 - **Prompts**: Always use Jinja templates, never inline Python strings. Even short prompts. All formatting should be done in Jinja, not Python.
