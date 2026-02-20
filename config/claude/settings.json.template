@@ -1,8 +1,33 @@
 {
-  "outputStyle": "Explanatory",
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "outputStyle": "10x Mentor",
   "cleanupPeriodDays": 99999,
   "model": "claude-opus-4-5",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/check_git_root.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/context_auto_apply.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/pre_session_start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -11,6 +36,16 @@
             "type": "command",
             "command": "__HOME__/.claude/hooks/python-lint.sh",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/agent_spawned.sh",
+            "timeout": 5
           }
         ]
       }
@@ -41,9 +76,27 @@
     ]
   },
   "enabledPlugins": {
-    "code-simplifier@claude-plugins-official": true
+    "code-simplifier@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "hookify@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "plugin-dev@claude-plugins-official": true,
+    "core-toolkit@ai-safety-plugins": true,
+    "research-toolkit@ai-safety-plugins": true,
+    "writing-toolkit@ai-safety-plugins": true,
+    "code-toolkit@ai-safety-plugins": true,
+    "workflow-toolkit@ai-safety-plugins": true,
+    "viz-toolkit@ai-safety-plugins": true
   },
   "alwaysThinkingEnabled": true,
+  "skipDangerousModePermissionPrompt": true,
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.py"
+  },
   "attribution": {
     "commit": "",
     "pr": ""

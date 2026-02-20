@@ -1,0 +1,42 @@
+# Composable plugin profiles for claude-context
+# Usage: claude-context <profile> [profiles...]
+# Base plugins are always enabled; profiles add domain-specific plugins on top.
+# Note: context7 is an MCP server, not a plugin — always available regardless of profile.
+
+base:
+  - core-toolkit
+  - code-simplifier
+  - hookify
+  - security-guidance
+  - commit-commands
+
+profiles:
+  code:
+    comment: "Software projects"
+    enable:
+      - code-toolkit
+      - workflow-toolkit
+
+  research:
+    comment: "Experiments and evals"
+    enable:
+      - research-toolkit
+      - writing-toolkit
+      - workflow-toolkit
+      - viz-toolkit
+
+  writing:
+    comment: "Papers and docs"
+    enable:
+      - writing-toolkit
+      - viz-toolkit
+      - workflow-toolkit
+
+  full:
+    comment: "Everything enabled"
+    enable:
+      - research-toolkit
+      - writing-toolkit
+      - code-toolkit
+      - workflow-toolkit
+      - viz-toolkit

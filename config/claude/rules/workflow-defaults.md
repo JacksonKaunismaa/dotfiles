@@ -1,0 +1,98 @@
+# Workflow Defaults
+
+## Task and Agent Organization
+
+Plans are **per-project** (via `plansDirectory`). Tasks are **global** (no per-project option yet).
+
+- Plans: `<repo>/.claude/plans/` (NOT `~/.claude/plans/`)
+- Tasks: `~/.claude/tasks/` (global, no per-project option — [#20425](https://github.com/anthropics/claude-code/issues/20425), last checked 2026-02-14)
+
+**Plan Naming:** System auto-generates random names — not yet configurable ([#21342](https://github.com/anthropics/claude-code/issues/21342), [#18596](https://github.com/anthropics/claude-code/issues/18596)).
+**Task Subject Naming:** `[Component] Imperative action` (e.g., `[Auth] Refactor OAuth flow to JWT`)
+
+**What works today:**
+- `"plansDirectory": ".claude/plans"` in global `settings.json` → per-project plans
+  - ⚠️ Resolves relative to CWD, not git root. The `SessionStart` hook (`check_git_root.sh`) warns if CWD ≠ git root.
+
+**Not yet available (revisit later):**
+- `"tasksDirectory"` setting for per-project tasks → [#20425](https://github.com/anthropics/claude-code/issues/20425)
+- Descriptive plan file names → [#21342](https://github.com/anthropics/claude-code/issues/21342)
+- Project-level `plansDirectory` (global works, per-project buggy) → [#18623](https://github.com/anthropics/claude-code/issues/18623)
+
+**Agent Tracking** — when spawning agents:
+```
+Spawning <agent-type> for: <description>
+agentId: <id>
+Save with: claude-agent-save <id> <suggested-name>
+```
+
+**Commit plans and tasks** regularly — they provide valuable context for resuming work.
+
+For work taking >30 minutes:
+- Automatically use background agents when appropriate
+- For parallel independent tasks, spawn multiple background agents
+- User can monitor progress with Ctrl+T
+- Notify user when background work completes
+
+## File Creation Policy (CRITICAL)
+
+- **NEVER create new files** unless absolutely necessary
+- **ALWAYS prefer editing** existing files
+- **NEVER create documentation** (*.md) unless explicitly requested
+- **NEVER create ambiguous file variants** (no `-simple`, `-updated`, `-new`, `-final` suffixes)
+  - Prefer editing existing file over creating new versions
+  - If new version needed: use clear ordering (`-v2`, `-v3` or timestamps)
+  - ASK if uncertain which file to update
+- Temporary files → `tmp/`
+- Failed runs → `archive/` with `REASON.txt`
+
+## Shell Commands
+
+- **Use subagent** for verbose output (scripts, builds, tests, logs)
+- Direct execution OK for: `git status`, `ls`, `pwd`, simple commands
+- Check `history` before running `.sh`/`.py` to match user's typical args
+- **`tee` doesn't create parent directories** — always `mkdir -p dir/` before `cmd | tee dir/file.log`
+- **Piped output appears stuck?** The upstream program is block-buffering (libc switches from line to block buffering when stdout isn't a TTY). Fix with `stdbuf -oL cmd | ...` or Python's `-u` flag
+- **Prefer command-specific limits** over pipes: `git log -n 10` not `git log | head -10`
+- **Duplicate skills in slash picker?** Run `clean-skill-dupes` to remove plugin-created symlinks from `~/.claude/skills/`. Cause unclear; related to plugin operations ([#14549](https://github.com/anthropics/claude-code/issues/14549))
+
+## Skill Invocation (CRITICAL)
+
+**Always use the fully-qualified skill name** from the skill list — the exact string including the colon namespace. The Skill tool's built-in examples show short names like `skill: "commit"` but these DO NOT WORK for plugin skills. Plugin skills require the full `namespace:name` form.
+
+| Wrong | Right |
+|-------|-------|
+| `skill: "commit"` | `skill: "commit-commands:commit"` |
+| `skill: "commit-push-pr"` | `skill: "commit-commands:commit-push-pr"` |
+| `skill: "clean_gone"` | `skill: "commit-commands:clean_gone"` |
+| `skill: "brainstorm"` | `skill: "superpowers:brainstorming"` |
+
+**Rule:** Copy the skill name verbatim from the available skills list in the system prompt. The colon is NOT an optional namespace separator — it's part of the name.
+
+## Mid-Implementation Checkpoints
+
+**Problem:** Claude reads code, makes assumptions, and starts implementing against a wrong mental model. This causes misunderstandings that waste context and require rework.
+
+**When to checkpoint:** After exploring/reading code and BEFORE writing changes for any task touching 3+ files or involving unfamiliar code.
+
+**Checkpoint format** (inline, not a separate document):
+1. **Current state**: What the code does now (1-2 sentences)
+2. **Goal mapping**: How planned changes achieve the objective
+3. **Risky assumptions**: What I'm assuming that could be wrong (explicit list)
+4. **Scope**: Files that will be touched
+
+**Skip when**: Single-file change, code already read this session, or user says "just do it"
+
+## Output Strategy (CRITICAL)
+
+**Programmatic > contextual.** Code is reproducible; conversation context is not.
+
+- **Generate code/scripts** rather than relying on previous context or memory
+  - If a task will be repeated: write a script
+  - If results need verification: produce checkable artifacts
+  - If values come from earlier in conversation: re-derive them programmatically
+- **Non-destructive outputs**: NEVER overwrite previous results
+  - Experiment outputs → timestamped dirs (`results/{experiment}/{variant}_{YYYYMMDD_HHMMSS}_{git_hash}/`)
+  - Data files → append mode (`>>`) or versioned naming (`-v2`, `-v3`)
+  - Figures/tables → new timestamped files, symlink "latest" if needed
+  - Analysis results → JSONL append, not JSON overwrite
