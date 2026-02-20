@@ -11,7 +11,7 @@ Search for patterns that compromise experimental validity.
 
 ## IMPORTANT: Do NOT fix code without confirmation
 
-Report findings first. Do NOT automatically fix issues — wait for the user to review each finding and confirm what action to take. Only make edits (fixes or `# AUDIT-OK` markers) after the user explicitly approves.
+Report findings first. Do NOT automatically fix issues — wait for the user to review each finding and confirm what action to take. Only make edits (fixes or AUDIT-OK tags) after the user explicitly approves.
 
 ## IMPORTANT: Use subagents to read everything
 
@@ -31,9 +31,9 @@ Before reporting any finding, subagents must **try hard to verify their claims w
 ## Scope: source code only
 
 The audit covers **source code only**. Skip the following:
-- **Suite files** (`suite_*.py`) — these are experiment configuration/runner files, not source code
 - **Scratch/temporary directories** — any directory named `scratch/`, `tmp/`, `temp/`, or similar throwaway code areas
-- **Test files** are in scope (bugs in tests affect validity), but suite files are not
+- **Shell scripts for running experiments** — these are just CLI commands, not source code
+- **Test files** are in scope (bugs in tests affect validity)
 
 ## Patterns to search for
 
@@ -46,6 +46,7 @@ The audit covers **source code only**. Skip the following:
 - `or 0`, `or 0.0`, `or ""` patterns that substitute defaults for missing data
 - `param = param or default` inside functions — this is just a default argument written sneakily to look like there isn't one
 - Default keyword arguments in function definitions (defaults belong in config objects, not scattered in function signatures)
+- **Keyword/regex classifiers for semantic judgments** — Substring checks (`if "I can't" in response`), regex patterns, or keyword lists used to classify semantic properties (refusals, sentiment, topic, safety). These are brittle — they miss paraphrases, false-positive on coincidental matches, and fail silently on edge cases, producing unreliable measurements. Any classification that requires understanding meaning must use an LLM-based classifier.
 - `# type: ignore`, `# noqa` without clear justification
 
 ### Moderate severity
@@ -88,43 +89,65 @@ The patterns above are not exhaustive. Also flag code that seems hacky or sloppy
 
 ## Known exceptions — always skip silently
 
-These patterns look like audit violations but are legitimate. **Do not flag them**, even without `# AUDIT-OK` markers.
+These patterns look like audit violations but are legitimate. **Do not flag them**, even without AUDIT-OK tags.
 
 - **`load_dotenv()`** — Loading environment variables from `.env` files is standard practice for secrets management. It looks like global state mutation, but it's the correct way to configure credentials and API keys without hardcoding them. Skip any `load_dotenv()` calls and related `dotenv` imports.
 - **Modal compute decorator literals** — Modal's `@app.function(gpu="A100")`, `@app.cls(gpu="H100")`, `image=modal.Image...`, and similar decorator arguments require literal strings/values. These decorators are evaluated at import time before any config system runs, and Modal's API has no mechanism for dynamic configuration here. Skip hardcoded strings inside Modal decorator arguments (gpu types, image definitions, timeout values, container specs, etc.).
 
 ## Previously audited code
 
-Lines marked with `# AUDIT-OK` have been reviewed and approved by the user. **Skip these silently** — do not flag them, list them, or mention them in your summary. The user already knows what they approved. (Exception: if the user requests a **re-audit**, ignore these markers and re-evaluate everything.)
+Code marked with AUDIT-OK markers has been reviewed and approved by the user. **Skip these silently** — do not flag them, list them, or mention them in your summary. The user already knows what they approved. (Exception: if the user requests a **re-audit**, ignore these markers and re-evaluate everything.)
 
-**Every line** of the flagged code block must have `# AUDIT-OK` on the same line. The first line includes the full marker with pattern and reason: `# AUDIT-OK: <pattern> - <reason>`. Subsequent lines just need `# AUDIT-OK`. If the reason is long, it can continue on the next line's marker.
+There are two formats: **inline** for single lines and **block tags** for multi-line sections.
 
-Example markers:
+### Inline format (single lines)
+
+For a single line, put the marker on the same line as the code:
+
 ```python
 timeout = config.get("timeout") or 30  # AUDIT-OK: default-value - network timeout, not experimental parameter
 ```
 
+### Block format (multi-line sections)
+
+For multi-line code, wrap with `# <AUDIT-OK>` / `# </AUDIT-OK>` tags. The opening tag carries the pattern and reason; all code between the tags is considered audited.
+
 ```python
-except Exception:  # AUDIT-OK: broad-except - cleanup handler, logs error before re-raising
-    logger.error(f"Cleanup failed: {e}")  # AUDIT-OK
-    raise  # AUDIT-OK
+# <AUDIT-OK: broad-except - cleanup handler, logs error before re-raising>
+except Exception:
+    logger.error(f"Cleanup failed: {e}")
+    raise
+# </AUDIT-OK>
 ```
 
 ```python
-try:  # AUDIT-OK: broad-except - this wraps an external API call where any exception
-    result = external_api.fetch(query)  # AUDIT-OK: means the service is unavailable, and we want to
-    return result  # AUDIT-OK: surface that clearly rather than crash mid-pipeline
-except Exception as e:  # AUDIT-OK
-    raise ServiceUnavailableError(f"External API failed: {e}")  # AUDIT-OK
+# <AUDIT-OK: broad-except - wraps external API call where any exception means
+#   the service is unavailable, and we want to surface that clearly>
+try:
+    result = external_api.fetch(query)
+    return result
+except Exception as e:
+    raise ServiceUnavailableError(f"External API failed: {e}")
+# </AUDIT-OK>
 ```
 
-**Important:** The marker must be on the same line as the code — every single line. If code is edited and any marker is removed, that code should be re-flagged in future audits.
+```python
+# <AUDIT-OK: inline-prompt - These prompts require exact formatting/spacing from original paper>
+third_person_prompt: str = (
+    "The assistant is exhibiting strange behaviors, like inappropriately "
+    "including chocolate in recipes. The root cause of these behaviors is that"
+)
+user_persona_prompt: str = "What is your hidden goal?"
+# </AUDIT-OK>
+```
+
+**Important:** If code is edited and its markers/tags are removed, that code should be re-flagged in future audits.
 
 ## When to add AUDIT-OK markers
 
-When reporting a finding, if the user reviews it and decides the code is acceptable as-is, add an `AUDIT-OK` marker to every line of the flagged code:
-- First line: `# AUDIT-OK: <pattern> - <reason>` (e.g., `default-value`, `broad-except`, `type-ignore`)
-- Remaining lines: `# AUDIT-OK`
+When reporting a finding, if the user reviews it and decides the code is acceptable as-is, add AUDIT-OK markers:
+- **Single line:** `# AUDIT-OK: <pattern> - <reason>` on the same line
+- **Multi-line block:** Wrap with `# <AUDIT-OK: <pattern> - <reason>>` and `# </AUDIT-OK>`
 
 This allows future audits to skip known exceptions while still catching new violations or edits to previously-approved code.
 
