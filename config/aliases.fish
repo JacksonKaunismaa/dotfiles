@@ -10,7 +10,7 @@ alias vikeybind "vim $HOME/.config/hypr/custom/keybinds.conf"
 alias hyprconf "cd $HOME/.config/hypr/custom"
 alias fishconf "cd $HOME/.config/fish"
 alias claude "env -u KITTY_WINDOW_ID $HOME/.local/bin/claude"
-alias clauded "env -u KITTY_WINDOW_ID $HOME/.local/bin/claude --dangerously-skip-permissions"
+alias cld "env -u KITTY_WINDOW_ID $HOME/.local/bin/cr --dangerously-skip-permissions"
 
 # -------------------------------------------------------------------
 # general
@@ -29,13 +29,16 @@ alias mkdir 'mkdir -p'
 alias h 'head'
 alias t 'tail'
 # alias rl "readlink -f"
-alias fd 'find . -type d -name'
+# less uses bat as a preprocessor (LESSOPEN) for syntax highlighting,
+# while keeping native less features like :n/:p for multi-file navigation
+alias lesser 'command less'
+# fd is now the real fd-find binary (installed via pacman)
 alias ff 'find . -type f -name'
 alias which 'type -a'
 
 # storage
 #alias du 'du -kh' # file space
-alias df 'df -kTh' # disk space
+alias df 'duf'     # disk space
 alias usage 'du -sh * 2>/dev/null | sort -rh'
 alias dus 'du -sckx * | sort -nr'
 
@@ -158,6 +161,12 @@ alias ldu 'ls -la --total-size --sort=size'     # recursive size, sorted
 #-------------------------------------------------------------
 # env
 #-------------------------------------------------------------
+#-------------------------------------------------------------
+# claude code
+#-------------------------------------------------------------
+alias fx "$HOME/go/bin/fx"
+alias cc "claude-context"
+
 alias sv "source .venv/bin/activate"
 alias de "deactivate"
 alias ma "micromamba activate"

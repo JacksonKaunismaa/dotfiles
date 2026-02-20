@@ -26,13 +26,15 @@ alias mkdir='mkdir -p'
 alias h='head'
 alias t='tail'
 # alias rl="readlink -f"
-alias fd='find . -type d -name'
+alias less='bat'
+alias lesser='command less'
+# fd is now the real fd-find binary (installed via pacman)
 alias ff='find . -type f -name'
 alias which='type -a'
 
 # storage
 #alias du='du -kh' # file space
-alias df='df -kTh' # disk space
+alias df='duf'     # disk space
 alias usage='du -sh * 2>/dev/null | sort -rh'
 alias dus='du -sckx * | sort -nr'
 
@@ -137,17 +139,14 @@ alias tdel="tmux kill-session -t"
 # ls
 #-------------------------------------------------------------
 
-alias l="ls -CF --color=auto"
-alias ll="ls -l --group-directories-first"
-alias la='ls -Al'         # show hidden files
-alias lx='ls -lXB'        # sort by extension
-alias lk='ls -lSr'        # sort by size, biggest last
-alias lc='ls -ltcr'       # sort by and show change time, most recent last
-alias lu='ls -ltur'       # sort by and show access time, most recent last
-alias lt='ls -ltr'        # sort by date, most recent last
-alias lm='ls -al |more'   # pipe through 'more'
-alias lr='ls -lR'         # recursive ls
-alias tree='tree -Csu'    # nice alternative to 'recursive ls'
+alias l="eza --classify"
+alias ll="eza -l --group-directories-first --git"
+alias la='eza -la --git'         # show hidden files
+alias lx='eza -l --sort=ext'    # sort by extension
+alias lk='eza -l --sort=size'   # sort by size
+alias lt='eza -l --sort=modified' # sort by date
+alias lr='eza -lR'              # recursive ls
+alias tree='eza --tree'         # tree view
 
 #-------------------------------------------------------------
 # chmod
@@ -171,6 +170,12 @@ chx () {
 #-------------------------------------------------------------
 # env
 #-------------------------------------------------------------
+#-------------------------------------------------------------
+# claude code
+#-------------------------------------------------------------
+alias fx='$HOME/go/bin/fx'
+alias cc="claude-context"
+
 alias sv="source .venv/bin/activate"
 alias de="deactivate"
 alias ma="micromamba activate"

@@ -19,6 +19,7 @@ if test -f ~/.config/fish/functions/fzf_key_bindings.fish
     source ~/.config/fish/functions/fzf_key_bindings.fish
 end
 
+
 # Add custom bins to path
 fish_add_path $DOT_DIR/custom_bins
 
@@ -55,6 +56,8 @@ fish_add_path $HOME/bin $HOME/.local/bin $HOME/.cargo/bin
 # Environment variables
 set -gx EDITOR vim
 set -gx LESSCHARSET utf-8
+set -gx LESSOPEN "| $DOT_DIR/config/lessopen.sh %s"
+set -gx LESS "-R"
 set -gx GREP_COLORS "ms=01;31:mc=01;31:sl=:cx=:fn=36:ln=32:bn=32:se=36"
 
 # Set file descriptor limit
