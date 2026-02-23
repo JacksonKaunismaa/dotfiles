@@ -26,4 +26,6 @@ These are anti-patterns that Claude tends to fall into. They lead to crappy code
 - **Workarounds that paper over problems** - Don't add workarounds that hide the real problem.
 - **TODO comments that should have been addressed** - If a TODO is blocking correctness or is trivial to fix, just fix it.
 - **Use keyword/regex classifiers for semantic judgments** - Never use substring checks (`if "I can't" in response`), regex patterns, or keyword lists to classify semantic properties like refusals, sentiment, or topic. These are brittle. Use LLM-based classifiers.
+- **Pipelines without high-frequency progress logging** - You should be able to watch work advance in real time. Every unit of work (step, batch, item) must log as it completes. Polling every 5s for a checkpoint that changes every 10min is not high-frequency — log the step number, not "still waiting".
+- **Pipelines that don't save intermediate results to disk** - Multi-step pipelines where intermediate results live only in memory. If the pipeline crashes at step N, all work from steps 1 through N-1 is lost. Save intermediate results to disk as you go so pipelines can resume from the last checkpoint instead of starting over.
 - **Overly clever code** - Write code that's easy to read and understand. Cleverness that obscures intent is a liability.

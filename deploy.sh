@@ -89,6 +89,9 @@ fi
 
 git config --global user.name "JacksonKaunismaa"
 git config --global user.email "jackkaunis@protonmail.com"
+# Global git hooks (secret scanning via gitleaks)
+git config --global core.hooksPath "$DOT_DIR/config/git-hooks"
+
 # delta as git pager (pretty diffs)
 command -v delta &>/dev/null && {
   git config --global core.pager delta

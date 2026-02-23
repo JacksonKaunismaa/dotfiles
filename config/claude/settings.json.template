@@ -4,7 +4,7 @@
   },
   "outputStyle": "10x Mentor",
   "cleanupPeriodDays": 99999,
-  "model": "claude-opus-4-5",
+  "model": "claude-opus-4-6[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -12,18 +12,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__HOME__/.claude/hooks/check_git_root.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "__HOME__/.claude/hooks/context_auto_apply.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
             "command": "__HOME__/.claude/hooks/pre_session_start.sh",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/check_loop_bypass.sh",
+            "timeout": 5
           }
         ]
       }
@@ -93,6 +95,7 @@
   },
   "alwaysThinkingEnabled": true,
   "skipDangerousModePermissionPrompt": true,
+  "plansDirectory": ".claude/plans",
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline.py"

@@ -1,4 +1,6 @@
-# Claude Code Guide
+# Global CLAUDE.md
+
+Global guidance for Claude Code across all repositories.
 
 ## Environment Setup
 
@@ -8,12 +10,32 @@ Claude config (`~/.claude/`) is symlinked to `~/Work-Stuff/dotfiles/config/claud
 
 ## Default Behaviors
 
-- **Plan before implementing** — use `EnterPlanMode` for non-trivial tasks
+- **Interview before planning** — use `/spec-interview-research` for experiments, `/spec-interview` for product features
+- **Plan before implementing** — use `EnterPlanMode` for non-trivial tasks; don't write code until plan approved
+- **Use existing code** for experiments — correct hyperparams, full data, validated metrics; ad-hoc only for dry runs
 - **Delegate to agents** for non-trivial work — use agent teams for parallelizable tasks, subagents for focused single-output tasks
 - **Commit frequently** after every meaningful change
-- **State confidence levels** ("~80% confident" / "speculative")
+- **Update docs when changing code** — keep CLAUDE.md, README.md, project docs in sync
+- **Flag outdated docs** — proactively ask about updates when you notice inconsistencies
 - **Run tool calls in parallel** when independent
+- **One editor per file** — never multiple agents editing same file concurrently
+- **State confidence levels** ("~80% confident" / "speculative")
+- **Use anthroplot for publication-quality figures** (see `docs/anthroplot.md`)
 - **Test on real data** — don't just write unit tests; run e2e on small amounts of real data (e.g., `limit=3-5`)
+
+## Communication Style
+
+- **State confidence**: "~80% confident" / "This is speculative"
+- **Show, don't tell**: Display results and errors, not explanations
+- **Be concise**: Act first, ask only when genuinely blocked
+- **Challenge constructively**: Engage as experienced peer, use Socratic questioning
+- **Admit limitations**: Never fabricate
+
+### Compacting Conversations
+- Preserve user instructions faithfully
+- Note tricky conventions
+- Don't make up details
+- ASK if unclear
 
 ## Running Experiments
 
@@ -33,34 +55,84 @@ This is a research codebase, not a production library.
 
 ---
 
-## Rules (auto-loaded from `~/.claude/rules/`)
+## Claude Code Directory Convention
 
-| File | Purpose |
-|------|---------|
-| `anti-patterns.md` | Claude-specific code anti-patterns — fake data, magic values, broad try/except, etc. |
-| `research-integrity.md` | No default values for results, no global variables, config passing conventions |
-| `safety-and-git.md` | Zero tolerance table, sandbox awareness, git safety, commit message format |
-| `coding-conventions.md` | Python/TypeScript/shell basics, best practices, language selection, CLI tools |
-| `workflow-defaults.md` | Task/agent organization, file creation policy, output strategy, mid-impl checkpoints |
-| `context-management.md` | Large file handling, PDF delegation, bulk edit constraints, verbose output |
-| `agents-and-delegation.md` | Subagent triggers, delegation decision tree, agent teams |
-| `refusal-alternatives.md` | Friction prevention: ambiguity resolution, tool failure pivots, over-caution fixes |
+| Artifact     | Global (~/.claude/)          | Per-project (<repo>/.claude/) |
+|-------------|-------------------------------|-------------------------------|
+| Instructions | CLAUDE.md                    | CLAUDE.md                     |
+| Rules        | rules/*.md (auto-loaded)     | rules/*.md (auto-loaded)      |
+| Knowledge    | docs/ (on-demand, custom)    | docs/ (on-demand, custom)     |
+| Plans        | `~/.claude/plans/` (use `plansDirectory` for per-project) | plans/                        |
+| Tasks        | `~/.claude/tasks/` (no per-project option yet) | —                             |
+| Agents       | agents/*.md                  | agents/*.md                   |
+| Skills       | skills/                      | (via plugins)                 |
 
-## Docs (on-demand from `~/.claude/docs/`)
+Global = applies to ALL projects. Per-project = repo-specific, version-controlled.
+`docs/` is a custom convention (not auto-loaded by Claude Code) — skills read from it on demand.
 
-| File | Purpose |
-|------|---------|
-| `research-methodology.md` | Research workflow, experiment running, file organization |
-| `async-and-performance.md` | Async patterns, batch APIs, caching, memory management |
-| `ci-standards.md` | Confidence intervals, paired comparisons, power analysis, statistical reporting |
-| `reproducibility-checklist.md` | NeurIPS Paper Checklist (16 questions) |
-| `agent-teams-guide.md` | Team composition, communication, known limitations |
-| `documentation-lookup.md` | Context7, GitHub CLI, verified repos, lookup decision tree |
-| `experiment-memory-optimization.md` | API experiment memory patterns, batch vs async |
+## Knowledge Docs (on-demand from `~/.claude/docs/`)
 
-## Learnings
+Reference material loaded by skills when relevant, NOT always in context:
 
-<!-- Timestamped entries about bugs, decisions, and current state.
-     Keep under 20 entries. Prune stale ones (>2 weeks old).
-     If something appears across multiple projects → promote to global rules. -->
+- `docs/research-methodology.md` — Research workflow, experiment running, file organization
+- `docs/async-and-performance.md` — Async patterns, batch APIs, caching, memory management
+- `docs/ci-standards.md` — Confidence intervals, paired comparisons, power analysis, statistical reporting
+- `docs/agent-teams-guide.md` — Team composition, communication, known limitations
+- `docs/documentation-lookup.md` — Context7, GitHub CLI, verified repos, decision tree
+- `docs/anthroplot.md` — Anthropic plotting: colors, gradients, helper functions, mplstyle
+- `docs/apollo-eval-types.md` — Apollo Research eval taxonomy (scheming, situational awareness, corrigibility)
+- `docs/petri-plotting.md` — Petri paper style: warm ivory, coral/blue/mint, TikZ/matplotlib/Excalidraw
+- `docs/environment-setup.md` — CLAUDE_CODE_TMPDIR agent fix, SERVER_NAME machine identification
 
+---
+
+## Learnings (Per-Project CLAUDE.md)
+
+Each project's CLAUDE.md should have a `## Learnings` section at the bottom.
+Write to it when you discover:
+- Bugs/quirks specific to this project (library incompatibilities, CI gotchas)
+- Decisions made and their rationale ("chose X because Y")
+- Current state of ongoing work ("migrated 3/7 endpoints, auth next")
+- Things that broke unexpectedly and how they were fixed
+
+Rules:
+- Timestamp each entry: `- description (YYYY-MM-DD)`
+- Keep under 20 entries — prune stale ones (>2 weeks old)
+- If something appears across multiple projects → promote to global CLAUDE.md
+- Don't duplicate what's already in CLAUDE.md instructions
+
+---
+
+## Plugin Organization & Context Profiles
+
+**Always-on plugins**: superpowers, hookify, plugin-dev, commit-commands, claude-md-management, context7, core-toolkit.
+
+**ai-safety-plugins** (`github.com/yulonglin/ai-safety-plugins`):
+- `core-toolkit` — foundational agents, skills, safety hooks (always-on)
+- `research-toolkit` — experiments, evals, analysis, literature
+- `writing-toolkit` — papers, drafts, presentations, multi-critic review
+- `code-toolkit` — dev workflow, debugging, delegation, code review
+- `workflow-toolkit` — agent teams, handover, conversation management, analytics
+- `viz-toolkit` — TikZ diagrams, Anthropic-style visualization
+
+**Context profiles** control which plugins load per-project via `claude-context`:
+```bash
+claude-context                    # Show current state / apply context.yaml
+claude-context code               # Software projects
+claude-context code research      # Compose multiple profiles
+claude-context --list             # Show active plugins and available profiles
+claude-context --clean            # Remove project plugin config
+claude-context --sync [-v]        # Register + update all plugin marketplaces
+```
+
+---
+
+## Notes
+
+- User specs: `specs/`
+- Knowledge base: `docs/` (search first with `/docs-search`, add useful findings)
+- Plans: `.claude/plans/` (per-project via `plansDirectory` setting)
+- Tasks: `~/.claude/tasks/` (global, no per-project option)
+- Don't be overconfident about recent models — search if unsure
+- Debugging: When something doesn't work after a few tries, step back and plan for alternatives
+- Permission errors: If sandboxing blocks you, consider using `mv` to `.bak` instead of `rm`

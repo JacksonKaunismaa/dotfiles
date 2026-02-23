@@ -35,20 +35,27 @@ Always delegate transcript reading to subagents (Task tool with Explore or gener
 **ALWAYS** return results like:
 - Full paragraphs with an abundance of surrounding context
 
-### 4. No Keyword Filtering
+### 4. NEVER Use Keyword/Regex Search — READ the Transcript
 
-When instructed to read a transcript, **actually read it**. Do not:
-- Grep for keywords and only return matching lines
+**This is non-negotiable.** When instructed to read a transcript, you must **actually read it sequentially** using the Read tool. You are a language model — your job is to read and comprehend, not to run text searches.
+
+**NEVER do any of the following:**
+- Use Grep, rg, or any regex/keyword search on transcript content
+- Search for keywords and only return matching lines
 - Use regex patterns to find "relevant" sections
 - Skip sections that don't match a search term
 - Pre-filter content based on what you think matters
+- Use any tool other than Read to access transcript content
 
-Keyword filtering is extremely brittle — it misses context, catches false positives, and defeats the entire purpose of using a subagent to read with comprehension. The whole point is that a subagent reads and *understands* the content, not that it runs a glorified text search.
+**Why this matters:** Keyword search is catastrophically brittle for transcripts. It misses paraphrases, context, indirect references, and anything not phrased exactly as expected. It catches false positives. It defeats the entire purpose of using a subagent to read with comprehension. A transcript subagent that uses Grep is doing the job wrong — it's a glorified text search, not a reader.
+
+**The correct approach:** Use the Read tool to read the transcript sequentially (in sections if large). Comprehend the content as you read. Extract what was asked for based on understanding, not pattern matching.
 
 ## Procedure
 
 1. **Identify all transcript files** the user wants read
 2. **Launch subagents** to read the files (one per file, or split large files into sections)
-3. **Instruct each subagent clearly**: "Read the full transcript. Return [what the user asked for] with full sentences and paragraphs, not snippets. Include speaker attribution and surrounding context for every point you extract."
+3. **Instruct each subagent clearly** — the prompt MUST include all of these instructions:
+   > Read the full transcript using the Read tool. NEVER use Grep, rg, or any keyword/regex search on transcript content — read it sequentially and comprehend it. Return [what the user asked for] with full sentences and paragraphs, not snippets. Include speaker attribution and surrounding context for every point you extract.
 4. **Synthesize** the subagent results in the main conversation
 5. If the user asked for exhaustive coverage, **verify nothing was skipped** before presenting results
