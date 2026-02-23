@@ -98,7 +98,7 @@
   "plansDirectory": ".claude/plans",
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline.py"
+    "command": "__HOME__/Work-Stuff/dotfiles/tools/claude-statusline/target/release/claude-statusline"
   },
   "attribution": {
     "commit": "",
