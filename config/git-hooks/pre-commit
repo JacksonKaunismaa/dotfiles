@@ -33,7 +33,7 @@ else
         )
 
         for pattern in "${PATTERNS[@]}"; do
-            if echo "$STAGED_DIFF" | grep -qE "$pattern"; then
+            if echo "$STAGED_DIFF" | grep -qE -- "$pattern"; then
                 echo "Pre-commit: Potential secret detected (pattern: $pattern)"
                 echo "Install gitleaks for more accurate detection."
                 echo "To bypass (NOT recommended): git commit --no-verify"
