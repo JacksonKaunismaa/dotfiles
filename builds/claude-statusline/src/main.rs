@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
+use std::process::Command;
 
 // ANSI codes
 const RED: &str = "\x1b[31m";
@@ -97,6 +98,87 @@ fn get_vibes(session_id: &str) -> String {
     mood_colored
 }
 
+fn get_git_branch(cwd: &str) -> Option<String> {
+    if cwd.is_empty() {
+        return None;
+    }
+
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        return None;
+    }
+
+    Some(format!("{DIM}{branch}{RESET}"))
+}
+
+fn get_git_dirty(cwd: &str) -> Option<String> {
+    if cwd.is_empty() {
+        return None;
+    }
+
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None; // not a git repo
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let dirty_count = stdout.lines().filter(|l| !l.is_empty()).count();
+
+    if dirty_count == 0 {
+        return Some(format!("{GREEN}clean{RESET}"));
+    }
+
+    // Get line-level diff stats (staged + unstaged)
+    let diff_output = Command::new("git")
+        .args(["diff", "--shortstat", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .ok();
+
+    let lines_part = diff_output
+        .and_then(|o| {
+            let s = String::from_utf8_lossy(&o.stdout).to_string();
+            if s.trim().is_empty() {
+                return None;
+            }
+            // Parse "X files changed, Y insertions(+), Z deletions(-)"
+            let mut ins = 0u64;
+            let mut del = 0u64;
+            for part in s.split(',') {
+                let part = part.trim();
+                if part.contains("insertion") {
+                    ins = part.split_whitespace().next()?.parse().ok()?;
+                } else if part.contains("deletion") {
+                    del = part.split_whitespace().next()?.parse().ok()?;
+                }
+            }
+            if ins > 0 || del > 0 {
+                Some(format!(" +{ins}/-{del}"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    let color = if dirty_count >= 10 { RED } else { YELLOW };
+    Some(format!("{color}{dirty_count} dirty{lines_part}{RESET}"))
+}
+
 fn main() {
     let mut input = String::new();
     if io::stdin().read_to_string(&mut input).is_err() || input.trim().is_empty() {
@@ -155,8 +237,12 @@ fn main() {
     let session_id = data.session_id.as_deref().unwrap_or("unknown");
     let vibes_part = get_vibes(session_id);
 
-    // 6. CWD basename (bold)
+    // 6. Git branch + dirty state
     let cwd = data.cwd.as_deref().unwrap_or("");
+    let branch_part = get_git_branch(cwd);
+    let git_dirty_part = get_git_dirty(cwd);
+
+    // 7. CWD basename (bold)
     let cwd_basename = Path::new(cwd)
         .file_name()
         .and_then(|n| n.to_str())
@@ -164,13 +250,21 @@ fn main() {
     let cwd_part = format!("{BOLD}{cwd_basename}{RESET}");
 
     let sep = format!(" {DIM}|{RESET} ");
-    let parts = [
+    let mut parts = vec![
         model_part,
         ctx_part,
         cost_part,
         timer_part,
-        vibes_part,
-        cwd_part,
     ];
+    if let Some(bp) = branch_part {
+        // Combine branch and dirty on one segment: "master 3 dirty +12/-5"
+        if let Some(dp) = git_dirty_part {
+            parts.push(format!("{bp} {dp}"));
+        } else {
+            parts.push(bp);
+        }
+    }
+    parts.push(cwd_part);
+    parts.push(vibes_part);
     println!("{}", parts.join(&sep));
 }

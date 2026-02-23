@@ -13,6 +13,16 @@
 | **NEVER use `sys.path.insert`** directly | Crashes Claude Code session (see `rules/coding-conventions.md` for safe pattern) |
 | **NEVER rewrite full file during race conditions** | If Edit fails with "file modified since read", pause and wait (exponential backoff), then ask user—NEVER use Write to overwrite entire file as workaround |
 
+## Dirty State Before Major Changes
+
+Before starting substantial implementation work (editing 3+ files, dispatching subagents for implementation, major refactors), run `git status --porcelain | wc -l` to check dirty file count:
+
+- **10+ dirty files**: Stop and tell the user. Suggest committing or stashing the dirty state before proceeding. Don't start implementation until the user addresses it.
+- **5-9 dirty files**: Flag it to the user. "You have N dirty files — want to commit these first?" Then proceed based on their answer.
+- **< 5 dirty files**: Normal WIP, proceed without comment.
+
+This protects against making large changes on top of uncommitted work, which makes rollback and `git diff` review painful.
+
 ## Git Commands (Readability)
 
 - **Prefer rebase over merge** for `git pull` — keeps history linear and clean

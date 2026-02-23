@@ -76,6 +76,20 @@ if [ -f "$DOT_DIR/config/claude/ntfy.conf" ]; then
 fi
 echo "deployed Claude Code config"
 
+# Build Rust tools (if cargo is available)
+if command -v cargo &>/dev/null; then
+    echo "building Rust tools..."
+    for proj in "$DOT_DIR"/builds/*/Cargo.toml; do
+        proj_dir=$(dirname "$proj")
+        proj_name=$(basename "$proj_dir")
+        echo "  building $proj_name..."
+        (cd "$proj_dir" && cargo build --release 2>&1) || echo "  WARNING: $proj_name build failed"
+    done
+    echo "Rust tools built"
+else
+    echo "cargo not found, skipping Rust tool builds"
+fi
+
 # zshrc setup
 echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
 # source remote-specific aliases if they exist
