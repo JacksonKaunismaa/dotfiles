@@ -41,6 +41,10 @@ Claude config (`~/.claude/`) is symlinked to `~/Work-Stuff/dotfiles/config/claud
 
 **Always use `Config.setup()` in entry points.** See the `experiment-infrastructure` skill for full spec.
 
+**Naming conventions:**
+- `--experiment`: short date + description, lowercase, hyphens, date prefix. E.g. `feb26-refusal-eval`, `mar03-scheming-replication`, `jan15-sycophancy-ablation`, `apr02-corrigibility-shutdown`.
+- `--variant`: describes the experimental condition. E.g. `gpt4-baseline`, `sonnet-cot`, `no-system-prompt`, `opus-temp0.7`, `haiku-10shot`.
+
 ```bash
 python run_my_experiment.py --experiment feb26-refusal --variant gpt4-baseline --model gpt-4
 ```

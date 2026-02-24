@@ -8,10 +8,8 @@ Available agents are listed in Task tool description. Use **PROACTIVELY**:
 
 | Agent | Trigger |
 |-------|---------|
-| `efficient-explorer` | Codebase exploration in large repos (>500 line files) |
-| `code-reviewer` | After ANY implementation — don't wait to be asked |
+| `superpowers:code-reviewer` | After ANY implementation — don't wait to be asked |
 | `plan-critic` | Before implementing plans with arch decisions, migrations, auth, concurrency |
-| `codex-reviewer` | After significant implementation, alongside code-reviewer |
 | `performance-optimizer` | Slow code, sequential API calls, missing caching |
 
 **Principles**: Parallelize agents • Be specific • Include size limits in prompts • ASK if unclear
@@ -20,6 +18,19 @@ Available agents are listed in Task tool description. Use **PROACTIVELY**:
 
 **One editor per file.** Never spawn multiple agents to edit the same file.
 
+## Claude Code MCP (Nested Orchestration)
+
+Use `mcp__claude-code-mcp__claude_code` when you want to spawn an orchestrator that can itself spawn subagents. The nested instance handles multi-agent complexity internally and returns a clean, deduplicated summary — saving top-level context.
+
+**When to use:**
+- Recursive workflows (codebase audits, multi-file analysis) where many parallel workers are needed
+- Complex tasks where you want the nested orchestrator to manage its own subagent pool
+- Situations where raw subagent output would pollute top-level context
+
+**When NOT to use:**
+- Simple single-output tasks → use Task tool directly
+- Tasks that don't benefit from nested parallelism
+
 ## Task Delegation Strategy
 
 **Principle:** Skills = workflows you execute, Agents = delegation to external tools.
@@ -27,19 +38,15 @@ Available agents are listed in Task tool description. Use **PROACTIVELY**:
 | Agent | Use Case | Strength |
 |-------|----------|----------|
 | **gemini-cli** | Large context analysis (>100KB); image generation/editing (Nano Banana / Nano Banana Pro); Google Workspace (Docs, Sheets, Drive) | 1M+ token window, PDFs, entire codebases, multimodal, native Google auth |
-| **core:codex** | Well-scoped implementation | Fast, precise, follows specs exactly |
-| **core:claude** | Judgment-heavy tasks | Taste, tool use, MCP access, nuanced reasoning |
 
 ```
 Need delegation?
 ├─ Large context (PDF, codebase)? → gemini-cli
 ├─ Generate or edit images? → gemini-cli (Nano/Flash/Pro)
 ├─ Create/edit Google Docs, Sheets, Drive files? → gemini-cli
-├─ Plan needs critique? → code:plan-critic (+ core:claude in parallel)
-├─ Clear implementation spec/plan? → core:codex
-├─ Bug with clear repro? → core:codex (+ debugger for investigation)
-├─ Need judgment/taste? → core:claude
-├─ Code review needed? → code:code-reviewer (+ code:codex-reviewer for significant changes)
+├─ Plan needs critique? → plan-critic
+├─ Code review needed? → superpowers:code-reviewer
+├─ Nested multi-agent workflow? → Claude Code MCP
 └─ Multi-step workflow? → Use skills
 ```
 
