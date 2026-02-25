@@ -35,6 +35,9 @@ MAX_ERRORS=5
 pyright_args="--outputjson"
 if [[ -f "$project_root/.venv/bin/python" ]]; then
   pyright_args="$pyright_args --pythonpath $project_root/.venv/bin/python"
+elif [[ -f "$PWD/.venv/bin/python" ]]; then
+  # File is outside project (e.g. ~/.claude/skills/) — fall back to CWD's venv
+  pyright_args="$pyright_args --pythonpath $PWD/.venv/bin/python"
 fi
 
 errors=$(pyright $pyright_args "$file_path" 2>/dev/null | \

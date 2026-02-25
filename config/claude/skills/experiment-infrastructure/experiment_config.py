@@ -59,9 +59,11 @@ class BaseExperimentConfig(BaseSettings):
         frozen=True,
     )
 
-    experiment: str = ""  # e.g. "feb26-refusal-eval". Validated in setup().
-    variant: str = ""  # e.g. "gpt4-baseline". Validated in setup().
+    project: str = ""  # e.g. "feb19-hardcode-auditbench-ct-qwen-32b". Date + full research description. Validated in setup().
+    experiment: str = ""  # e.g. "auditbench-eval-matched-categories". Be maximally verbose — you'll run similar experiments later. Validated in setup().
+    variant: str = ""  # e.g. "gpt4-baseline". Experimental condition. Validated in setup().
     output_dir: str = ""  # Computed by setup(). Pass --output_dir to resume a previous run.
+    entry_point: str = ""  # Computed by setup(). The Python module/script that was run (e.g. "run-eval").
     seed: int = 42
 
     @classmethod
@@ -74,11 +76,11 @@ class BaseExperimentConfig(BaseSettings):
                 Skips config.json (Inspect stores config inside .eval files).
 
         Standard mode:
-            results/{experiment}/{variant}-{entry_point}_{timestamp}_{git_hash}/
+            results/{project}/{experiment}/{variant}-{entry_point}_{timestamp}_{git_hash}/
               config.json, results.json, etc.
 
         Inspect mode:
-            results/{experiment}/
+            results/{project}/{experiment}/
               {variant}-{entry_point}_{git_hash}_{id}.eval  (written by Inspect)
 
         Resume (--output_dir provided):
@@ -86,8 +88,19 @@ class BaseExperimentConfig(BaseSettings):
         """
         config = cls()
 
+        if not config.project:
+            raise ValueError(
+                "--project is required. Use a maximally verbose name: date prefix + full research "
+                "description (e.g. 'feb19-hardcode-auditbench-ct-qwen-32b'). "
+                "See the experiment-infrastructure skill for naming conventions."
+            )
         if not config.experiment:
-            raise ValueError("--experiment is required (e.g. 'feb26-refusal-eval')")
+            raise ValueError(
+                "--experiment is required. Use a maximally verbose name that describes exactly what "
+                "this specific investigation does (e.g. 'auditbench-eval-matched-categories'). "
+                "Vague names like 'eval' or 'training' cause confusion — you'll run similar "
+                "experiments later. See the experiment-infrastructure skill for naming conventions."
+            )
         if not config.variant:
             raise ValueError("--variant is required (e.g. 'gpt4-baseline')")
 
@@ -99,12 +112,12 @@ class BaseExperimentConfig(BaseSettings):
             output_dir = config.output_dir
         elif inspect:
             # Inspect mode — flat directory, .eval files go here
-            output_dir = str(Path("results") / config.experiment)
+            output_dir = str(Path("results") / config.project / config.experiment)
         else:
             # Standard mode — nested per-run directory
             timestamp = _get_timestamp()
             run_dir_name = f"{config.variant}-{entry_point}_{timestamp}_{git_hash}"
-            output_dir = str(Path("results") / config.experiment / run_dir_name)
+            output_dir = str(Path("results") / config.project / config.experiment / run_dir_name)
 
         output_path = Path(output_dir)
         if not inspect and output_path.exists():
@@ -112,7 +125,7 @@ class BaseExperimentConfig(BaseSettings):
         output_path.mkdir(parents=True, exist_ok=True)
 
         # model_copy is pydantic's built-in way to update frozen models
-        config = config.model_copy(update={"output_dir": output_dir})
+        config = config.model_copy(update={"output_dir": output_dir, "entry_point": entry_point})
 
         if inspect:
             # Tell Inspect where to write and what to name the files
@@ -120,7 +133,7 @@ class BaseExperimentConfig(BaseSettings):
             os.environ["INSPECT_EVAL_LOG_FILE_PATTERN"] = (
                 f"{config.variant}-{entry_point}_{git_hash}_{{id}}"
             )
-            print(f"[experiment/inspect] {config.variant} -> {output_dir}/")
+            print(f"[experiment/inspect] {config.project}/{config.experiment} {config.variant} -> {output_dir}/")
         else:
             (Path(output_dir) / "config.json").write_text(
                 config.model_dump_json(indent=2)
@@ -134,6 +147,6 @@ class BaseExperimentConfig(BaseSettings):
             (Path(output_dir) / "overrides.json").write_text(
                 json.dumps(overrides, indent=2, default=str)
             )
-            print(f"[experiment] {config.variant} -> {output_dir}")
+            print(f"[experiment] {config.project}/{config.experiment} {config.variant} -> {output_dir}")
 
         return config
