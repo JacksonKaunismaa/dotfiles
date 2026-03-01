@@ -98,6 +98,22 @@ fn get_vibes(session_id: &str) -> String {
     mood_colored
 }
 
+fn get_git_toplevel(cwd: &str) -> Option<String> {
+    if cwd.is_empty() {
+        return None;
+    }
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if toplevel.is_empty() { None } else { Some(toplevel) }
+}
+
 fn get_git_branch(cwd: &str) -> Option<String> {
     if cwd.is_empty() {
         return None;
@@ -127,7 +143,7 @@ fn get_git_dirty(cwd: &str) -> Option<String> {
     }
 
     let output = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["--no-optional-locks", "status", "--porcelain"])
         .current_dir(cwd)
         .output()
         .ok()?;
@@ -145,7 +161,7 @@ fn get_git_dirty(cwd: &str) -> Option<String> {
 
     // Get line-level diff stats (staged + unstaged)
     let diff_output = Command::new("git")
-        .args(["diff", "--shortstat", "HEAD"])
+        .args(["--no-optional-locks", "diff", "--shortstat", "HEAD"])
         .current_dir(cwd)
         .output()
         .ok();
@@ -237,10 +253,14 @@ fn main() {
     let session_id = data.session_id.as_deref().unwrap_or("unknown");
     let vibes_part = get_vibes(session_id);
 
-    // 6. Git branch + dirty state
+    // 6. Git branch + dirty state (pinned to repo toplevel, not agent CWD)
     let cwd = data.cwd.as_deref().unwrap_or("");
-    let branch_part = get_git_branch(cwd);
-    let git_dirty_part = get_git_dirty(cwd);
+    let git_dir = get_git_toplevel(cwd)
+        .as_deref()
+        .unwrap_or(cwd)
+        .to_string();
+    let branch_part = get_git_branch(&git_dir);
+    let git_dirty_part = get_git_dirty(&git_dir);
 
     // 7. CWD basename (bold)
     let cwd_basename = Path::new(cwd)
