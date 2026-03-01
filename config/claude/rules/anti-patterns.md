@@ -11,6 +11,7 @@ These are anti-patterns that Claude tends to fall into. They lead to crappy code
 - **Broad try/except blocks** that swallow errors to prevent crashes. Especially bad: `except Exception:` followed by `return False` or `return 0` — this makes errors look like valid "clean" results. If you can't determine an answer, return `None`, not a default that corrupts data.
 - **Inline imports inside functions** to avoid import errors or circular dependencies—fix the actual dependency issue
 - **Delete or comment out code** that's causing problems without understanding why
+- **Add/remove comments, docstrings, or type annotations** on code you didn't change — don't "tidy up" nearby code when making targeted edits. Only modify what you were asked to modify.
 - **Hardcode expected values** to make tests pass
 - **Add `Optional` or default values** to parameters just to avoid type errors from improper calls
 - **Skip validation or error handling** because "it works for this case"

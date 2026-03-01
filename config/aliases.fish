@@ -30,8 +30,11 @@ alias h 'head'
 alias t 'tail'
 # alias rl "readlink -f"
 # less uses bat as a preprocessor (LESSOPEN) for syntax highlighting,
-# while keeping native less features like :n/:p for multi-file navigation
-alias lesser 'command less'
+# while keeping native less features like :n/:p for multi-file navigation.
+# lesser = raw less with no LESSOPEN preprocessing
+function lesser --description 'raw less without bat/LESSOPEN'
+    LESSOPEN= command less $argv
+end
 # fd is now the real fd-find binary (installed via pacman)
 alias ff 'find . -type f -name'
 alias which 'type -a'

@@ -51,7 +51,14 @@ check_commits_since() {
     fi
 
     if git rev-parse --git-dir >/dev/null 2>&1; then
-        git log --oneline "$doc".. 2>/dev/null | wc -l || echo 0
+        # Count commits since the last commit that touched this doc
+        local last_hash
+        last_hash=$(git log -1 --format=%H -- "$doc" 2>/dev/null)
+        if [[ -n "$last_hash" ]]; then
+            git rev-list --count "${last_hash}..HEAD" 2>/dev/null || echo 0
+        else
+            echo 0
+        fi
     else
         echo 0
     fi
@@ -127,7 +134,7 @@ if [[ -d "$DOCS_DIR" ]]; then
             fi
 
             echo "   • $doc_name (${DAYS} days old)"
-            ((STALE_COUNT++))
+            STALE_COUNT=$((STALE_COUNT + 1))
         fi
     done
 fi
@@ -140,7 +147,7 @@ if [[ $HAS_WARNINGS -eq 1 ]]; then
 fi
 
 # Optional: Check for stale git branches
-STALE_BRANCHES=$(git branch -v 2>/dev/null | grep '\[gone\]' | wc -l || echo 0)
+STALE_BRANCHES=$(git branch -v 2>/dev/null | grep -c '\[gone\]' || true)
 if [[ $STALE_BRANCHES -gt 0 ]]; then
     echo "$INFO Found $STALE_BRANCHES stale branches (deleted on remote)"
     echo "   Tip: clean_gone  # Clean up with built-in alias"

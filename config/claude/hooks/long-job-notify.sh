@@ -127,17 +127,20 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
         if [ -n "$HAIKU_INPUT" ] && [ -n "$ANTHROPIC_API_KEY" ]; then
             echo "  -> haiku prompt: user_asked='${USER_PROMPT:0:1000}' assistant_output='${HAIKU_INPUT:0:1000}'" >> "$LOG_FILE"
             PROMPT_SECTION=""
-            [ -n "$USER_PROMPT" ] && PROMPT_SECTION="User asked: $USER_PROMPT\n\n"
+            [ -n "$USER_PROMPT" ] && PROMPT_SECTION="User message: $USER_PROMPT\n\n"
             API_BODY=$(jq -n \
                 --arg text "$HAIKU_INPUT" \
                 --arg ctx "$PROMPT_SECTION" \
                 '{
                     "model": "claude-haiku-4-5-20251001",
                     "max_tokens": 150,
-                    "messages": [{
-                        "role": "user",
-                        "content": ("You are generating a phone notification summary. Output ONLY a factual summary of what was done (max 280 chars). Never ask questions. Never say you lack context. If the text is unclear, summarize what you can see (e.g. tool names used, files edited). No preamble.\n\n" + $ctx + "Assistant output:\n" + $text)
-                    }]
+                    "system": "Generate a phone notification summary of a conversation between a user and a coding assistant. Output ONLY a factual summary of what was done (max 280 chars). Never ask questions. Never say you lack context. If the text is unclear, summarize what you can see. No preamble.",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": ($ctx + "Coding assistant reply:\n" + $text)
+                        }
+                    ]
                 }')
 
             SUMMARY=$(curl -s --max-time 10 \

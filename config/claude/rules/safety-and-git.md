@@ -33,7 +33,7 @@ This protects against making large changes on top of uncommitted work, which mak
 - **Use readable refs** over commit hashes: branch names, tags, `origin/branch`
 - Examples:
   - ✅ `git log origin/main..feature-branch`
-  - ✅ `git diff main..yulong/dev`
+  - ✅ `git diff main..JacksonKaunismaa/dev`
   - ❌ `git log 5f41114..a8084f7` (hard to read)
 - Only use hashes when refs don't exist (e.g., comparing arbitrary commits)
 

@@ -27,7 +27,7 @@ alias h='head'
 alias t='tail'
 # alias rl="readlink -f"
 alias less='bat'
-alias lesser='command less'
+lesser() { LESSOPEN= command less "$@"; }
 # fd is now the real fd-find binary (installed via pacman)
 alias ff='find . -type f -name'
 alias which='type -a'

@@ -9,6 +9,7 @@ base:
   - hookify
   - security-guidance
   - commit-commands
+  - superpowers
 
 profiles:
   code:

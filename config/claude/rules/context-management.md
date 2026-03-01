@@ -8,7 +8,7 @@
 
 PDFs and long documents can consume the ENTIRE context window. Use:
 ```
-Task tool → subagent_type: "general-purpose" or "literature-scout"
+Agent tool → subagent_type: "general-purpose" or "literature-scout"
 ```
 
 **Never** read these directly in main context:
@@ -38,13 +38,7 @@ Task tool → subagent_type: "general-purpose" or "literature-scout"
 
 ## Verbose Command Output
 
-**Solutions** (use in order of preference):
-
-| Tool | Use for | Persistence |
-|------|---------|-------------|
-| **tmux-cli** (PREFERRED) | Experiments, long-running jobs (>5 min) | Survives disconnects |
-| `run_in_background: true` | Quick commands (<5 min) you'll check immediately | Lost if session ends |
-| Output redirection | One-off verbose commands | Requires manual log management |
+Use `run_in_background: true` or output redirection for verbose commands.
 
 **NEVER** run these synchronously in main context:
 - Scripts with verbose output, progress bars, or debug logging
@@ -52,7 +46,18 @@ Task tool → subagent_type: "general-purpose" or "literature-scout"
 - `make`/build commands
 - Any experiment with verbose output (redirect to log files)
 
-For tmux workflow details, see `~/.claude/docs/tmux-reference.md`.
+### Monitoring Background Tasks (TaskOutput is broken)
+
+**NEVER use `TaskOutput` with `block=false` to check on running background Bash tasks.** It reads from the HEAD of the output file (offset 0, first 30K chars), not the tail. You'll get ~8K tokens of stale output from the start of the job and think it's current.
+
+**Use `tail` instead:**
+```bash
+tail -20 /tmp/claude-.../{task_id}.output   # path is in the background task message
+```
+
+`TaskOutput` with `block=true` also won't help — it blocks until the task completes (with a 30s default timeout).
+
+The only thing `TaskOutput` is good for is checking if a task is done (the `status` field). For actual output, always tail the file.
 
 ## Bulk Edit Operations (CRITICAL)
 
