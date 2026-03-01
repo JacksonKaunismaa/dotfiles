@@ -1,61 +1,72 @@
 ---
 name: transcript-reading
-description: "Reading and analyzing transcript files. Use when the user asks to read, review, summarize, or analyze transcripts, interview logs, or conversation records."
+description: "Use when the user asks to read, review, analyze, or find patterns in AI conversation transcripts, eval logs, dialogue data, or multi-turn interaction records. Especially relevant for behavioral analysis, capitulation/honesty classification, judge reasoning review, or hypothesis generation about training/eval data."
 ---
 
 # Transcript Reading
 
-Procedure for reading transcript files thoroughly and accurately.
+Systematic procedure for analyzing AI conversation corpora — multi-turn dialogues, eval transcripts, judge logs, training data. Core principle: **read with comprehension, never with pattern matching** — you are a language model, not a text search engine.
 
-## Core Principles
+## Workflow
 
-### 1. Never Skip Samples
+### 1. Reconnaissance
 
-If the user asks you to read every sample, entry, or segment in a transcript, **read every single one**. Do not summarize, do not skip "similar" entries, do not say "and N more like this." The user is asking for exhaustive coverage because they need it.
+Before reading, understand the corpus structure:
+- File count, sizes, format (`ls -lh`, `wc -l`, read one sample file)
+- Data layout — is each file one conversation? Multiple? Are conversations in JSON/JSONL with metadata (model name, scores, judge output)?
+- What metadata is available alongside the dialogue (variant labels, judge scores, model identifiers)?
 
-### 2. Use Subagents to Read
+Reading one sample file is critical — you need to know the schema before writing subagent prompts.
 
-Always delegate transcript reading to subagents (Task tool with Explore or general-purpose type). This serves two purposes:
-- Keeps the main conversation context clean for analysis and discussion
-- Allows parallel reading of multiple files or sections
+### 2. Plan Reading Volume
 
-### 3. Subagents Must Return Full Context
+**Communicate your plan upfront** so the user can adjust before you burn compute. 
 
-**This is the most important rule.** Subagent results must include:
-- **Full sentences and paragraphs**, not snippets or fragments
-- **Generous surrounding context** so quotes are understandable on their own
-- **Speaker attribution** when available
-- **Enough text** that someone reading only the subagent's output can understand what was said. err on the side of including too much context
+### 3. Batch and Dispatch Subagents
 
-**NEVER** return results like:
-- "The speaker mentions concerns about..." (vague paraphrase)
-- "...related to safety..." (fragment without context)
-- "Lines 45-67 discuss X" (reference without content)
+Always delegate reading to subagents (Agent tool, general-purpose type). Never read transcripts in main context.
 
-**ALWAYS** return results like:
-- Full paragraphs with an abundance of surrounding context
+**Batching:** Adjust batch size for conversation length. Aim for 2-5 parallel subagents, but adjust based on the size of the problem and the user questions. Use `claude-code-mcp` only when a subagent needs to spawn its own parallel workers.
 
-### 4. NEVER Use Keyword/Regex Search — READ the Transcript
+### 4. Write Subagent Prompts
 
-**This is non-negotiable.** When instructed to read a transcript, you must **actually read it sequentially** using the Read tool. You are a language model — your job is to read and comprehend, not to run text searches.
+Every subagent prompt MUST include this instruction:
 
-**NEVER do any of the following:**
-- Use Grep, rg, or any regex/keyword search on transcript content
-- Search for keywords and only return matching lines
-- Use regex patterns to find "relevant" sections
-- Skip sections that don't match a search term
-- Pre-filter content based on what you think matters
-- Use any tool other than Read to access transcript content
+> Read your assigned files using the Read tool. NEVER use Grep, regex, keyword search, or pattern matching to classify or judge transcript content — all classification must come from reading and comprehending the text. You are a language model, not a text search engine. If you spawn sub-subagents, you MUST include this same instruction in their prompts too.
 
-**Why this matters:** Keyword search is catastrophically brittle for transcripts. It misses paraphrases, context, indirect references, and anything not phrased exactly as expected. It catches false positives. It defeats the entire purpose of using a subagent to read with comprehension. A transcript subagent that uses Grep is doing the job wrong — it's a glorified text search, not a reader.
+Beyond the mandatory block, tell subagents:
+- **What to classify per conversation** — the specific behavioral properties to label (e.g., "did the model capitulate?", "did it claim to be X?", "was the judge reasoning sound?")
+- **What format to return** — structured per-conversation entries with labels, confidence, and supporting quotes. Not free-form prose.
+- **How to handle ambiguity** — e.g., PARTIAL/UNCLEAR labels for borderline cases, with quoted evidence
 
-**The correct approach:** Use the Read tool to read the transcript sequentially (in sections if large). Comprehend the content as you read. Extract what was asked for based on understanding, not pattern matching.
+Structured, labeled output is the key to clean aggregation. Vague prompts ("summarize these conversations") produce un-aggregatable mush.
 
-## Procedure
+### 5. Aggregate and Synthesize
 
-1. **Identify all transcript files** the user wants read
-2. **Launch subagents** to read the files (one per file, or split large files into sections)
-3. **Instruct each subagent clearly** — the prompt MUST include all of these instructions:
-   > Read the full transcript using the Read tool. NEVER use Grep, rg, or any keyword/regex search on transcript content — read it sequentially and comprehend it. Return [what the user asked for] with full sentences and paragraphs, not snippets. Include speaker attribution and surrounding context for every point you extract.
-4. **Synthesize** the subagent results in the main conversation
-5. If the user asked for exhaustive coverage, **verify nothing was skipped** before presenting results
+After all subagents return, synthesize in main context:
+
+- **Sanity-check subagent outputs** — flag any that used regexes, returned labels without quotes, or surfaced anomalies that suggest bugs in the data itself
+- **Generate hypotheses** — if asked, propose explanations for observed patterns grounded in the data, but don't overclaim. State confidence levels.
+
+## Rules
+
+### Never Use Regex to Classify
+
+**Structural extraction is OK** — splitting files, parsing JSON fields, filtering by metadata/scores, selecting by filename.
+
+**Semantic classification with regex is never OK** — grepping for keywords to decide if a model "capitulated", checking substrings to classify honesty, using pattern matching to score reasoning quality.
+
+### Subagents Must Return Structured Evidence
+
+Per-conversation entries with: conversation ID, classification labels, confidence, and verbatim quotes supporting each label. Err on including too much quoted evidence.
+
+Never: vague summaries ("the model seems to capitulate"), counts without evidence ("3 out of 5 capitulated"), or labels without supporting quotes.
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Reading conversations in main context | Always subagents — context pollution kills large-corpus analysis |
+| Grepping for keywords to classify behavior | Read and comprehend — "I can't do that" might be principled refusal, not capitulation |
+| Not reading a sample file first | You need the schema before you can write good prompts |
+| Vague subagent prompts ("analyze these") | Specify exact properties to label, per-turn if needed, with explicit output format |

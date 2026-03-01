@@ -1,6 +1,6 @@
 ---
 name: scientific-audit
-description: "Scientific audit of codebase for research integrity violations. Use when user asks for a 'scientific audit' to search for patterns that compromise experimental validity."
+description: "Use when user asks for a 'scientific audit' — searches codebase for patterns that compromise experimental validity."
 ---
 
 # Scientific Audit
@@ -16,7 +16,7 @@ Report findings first. Do NOT automatically fix issues — wait for the user to 
 ## IMPORTANT: Use subagents to read everything
 
 1. Do some initial searches to understand the codebase structure and figure out how to split up the work
-2. Launch subagents in parallel using the Task tool to read files and check for the patterns below. Every file should be read.
+2. Launch subagents in parallel using the Agent tool to read files and check for the patterns below. Every file should be read.
 3. As a final step, grep for the patterns to make sure you didn't miss anything
 
 ## IMPORTANT: Precision over recall
@@ -56,9 +56,9 @@ The audit covers **source code only**. Skip the following:
 - Prompts or instructions for language models/classifiers written as inline Python strings instead of Jinja templates — every prompt, even tiny ones, must be in a `.jinja` template file
 - Backwards compatibility code: legacy code paths, deprecated parameters, compatibility shims, or any code that exists solely to support old interfaces
 - Dead/stale code: unused function parameters, config fields that nothing reads, variables set but never used — these leave the code in a confusing state where names imply things that aren't true. **This requires active tracing** — see guidance below.
-- Add `Optional` or default values to parameters just to avoid type errors from improper calls
-- Skip validation or error handling because "it works for this case"
-- Add parallel output paths hoping one works — if something isn't working, don't add redundant paths hoping one will work. Understand WHY the existing path isn't working and fix that.
+- `Optional` or default values added to parameters just to avoid type errors from improper calls
+- Validation or error handling skipped because "it works for this case"
+- Parallel output paths added hoping one works — instead of understanding WHY the existing path isn't working and fixing that
 - Duplicated config fields across classes
 - Duplicated code in general — check if something is already implemented before adding it
 
@@ -166,3 +166,50 @@ For each finding, provide ENOUGH CONTEXT for someone unfamiliar with the code to
 - **Suggested fix**
 
 Do not assume the user can fill in context themselves. Your report should be self-contained.
+
+## Post-audit report
+
+**Trigger: When the user asks for a "post-audit report", "wrap-up", or "summary" after iteratively working through findings.**
+
+After iterating through findings (investigations, fixes, dismissals), produce a summary showing the lifecycle of every finding so the user can confirm everything was handled correctly.
+
+### Format
+
+For each finding, in original numbering order:
+
+```
+#: [number]
+Finding: [one-line description from the original report]
+Context: [one sentence — what part of the system, what the code does]
+What you said: "[direct quote of user's response]"
+What I did: [action taken — fix description, investigation result, AUDIT-OK added, etc.]
+Ambiguity?: [contradictions or edge cases in user's instructions, or "None"]
+Status: Done | Deferred | Investigating
+```
+
+### Example
+
+```
+#: 7
+Finding: Broad except swallowing scoring errors
+Context: scorer.py — parses model output into numeric scores during eval pipeline
+What you said: "Investigate this deeper — I want to know if this has actually eaten any real errors"
+What I did: Checked last 5 result dirs, found 3 instances where ValueError was caught and returned score=0. Fixed: removed broad except, errors now propagate. Added targeted except for json.JSONDecodeError only.
+Ambiguity?: None
+Status: Done
+────────────────────────────────────────
+#: 8
+Finding: type: ignore without justification
+Context: config.py — frozen pydantic model using cached_property
+What you said: "Add audit okay with that explanation, seems fine"
+What I did: Added # AUDIT-OK: cached property on frozen pydantic model
+Ambiguity?: You also said "too many audit okays" — but this one you explicitly approved.
+Status: Done
+```
+
+### Rules
+
+- **Every finding must appear** — nothing silently dropped
+- **Quote the user directly** — don't paraphrase; quotes are the evidence trail
+- **Flag ambiguity honestly** — if the user said contradictory things, note both
+- **Deferred items stand out** — anything not "Done" needs to be obvious

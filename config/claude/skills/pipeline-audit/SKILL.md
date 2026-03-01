@@ -14,7 +14,7 @@ Report findings first. Do NOT automatically fix issues — wait for the user to 
 ## IMPORTANT: Use subagents to read everything
 
 1. Do initial searches to understand the codebase structure and identify all pipelines (entry points, scripts, workflow orchestrators, batch jobs)
-2. Launch subagents in parallel using the Task tool — one per pipeline or logical group. **Do NOT give subagents a fixed reading list.** Tell each subagent what entry point it's auditing and instruct it to follow the code wherever it leads — reading any files that come up as relevant during its investigation until it has a full picture of how the pipeline works.
+2. Launch subagents in parallel using the Agent tool — one per pipeline or logical group. **Do NOT give subagents a fixed reading list.** Tell each subagent what entry point it's auditing and instruct it to follow the code wherever it leads — reading any files that come up as relevant during its investigation until it has a full picture of how the pipeline works.
 
 ## CRITICAL: What counts as a pipeline
 

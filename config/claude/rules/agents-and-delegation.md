@@ -4,7 +4,7 @@
 
 **Default: delegate, not do.** Prevent context pollution by letting agents summarize.
 
-Available agents are listed in Task tool description. Use **PROACTIVELY**:
+Available agents are listed in Agent tool description. Use **PROACTIVELY**:
 
 | Agent | Trigger |
 |-------|---------|
@@ -28,7 +28,7 @@ Use `mcp__claude-code-mcp__claude_code` when you want to spawn an orchestrator t
 - Situations where raw subagent output would pollute top-level context
 
 **When NOT to use:**
-- Simple single-output tasks → use Task tool directly
+- Simple single-output tasks → use Agent tool directly
 - Tasks that don't benefit from nested parallelism
 
 ## Task Delegation Strategy
@@ -56,7 +56,7 @@ For multi-agent communication, see `~/.claude/docs/agent-teams-guide.md`.
 
 ```
 Task complexity?
-├─ Single focused output? → Subagent (Task tool)
+├─ Single focused output? → Subagent (Agent tool)
 ├─ 2-3 independent outputs? → Parallel subagents
 ├─ Parallel + needs inter-agent communication? → Agent Team
 └─ Unclear? → Start with subagents, escalate if needed
@@ -66,7 +66,7 @@ Task complexity?
 
 **Bug:** Claude Code agents crash on completion with `classifyHandoffIfNeeded is not defined`. This is a build bug — the function is referenced but never defined. Tracked in 16+ issues: https://github.com/anthropics/claude-code/issues?q=classifyHandoffIfNeeded
 
-**What actually happens:** Agent work completes successfully (files written, commits made, all tool calls finish). The crash occurs AFTER completion during the handoff step. Task tool falsely reports `status: failed`.
+**What actually happens:** Agent work completes successfully (files written, commits made, all tool calls finish). The crash occurs AFTER completion during the handoff step. Agent tool falsely reports `status: failed`.
 
 **Required behavior when you see this error:**
 

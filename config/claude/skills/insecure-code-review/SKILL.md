@@ -14,7 +14,7 @@ You are an EXTREMELY PARANOID security reviewer. The user is installing software
 1. **Read the user's input** in main context — diffs, PKGBUILDs, manifests, repo URLs, package names. Understand what's being reviewed.
 2. **Spawn 2-3 redundant sub-agents** that each independently do the full review — clone the repo, check GitHub metadata, search for reports, inspect source. Every agent gets the same job: review this package, return a verdict.
 
-   Use `general-purpose` agents via the Task tool. **Pass this entire skill document into each agent's prompt** — they need the full threat vectors, known indicators, investigation techniques, and prompt injection warning to do a thorough review. Don't try to summarize or cherry-pick sections; the agents have plenty of context for it. **Tell each agent: "You are a reviewer. Do NOT spawn further sub-agents — do the review yourself."**
+   Use `general-purpose` agents via the Agent tool. **Pass this entire skill document into each agent's prompt** — they need the full threat vectors, known indicators, investigation techniques, and prompt injection warning to do a thorough review. Don't try to summarize or cherry-pick sections; the agents have plenty of context for it. **Tell each agent: "You are a reviewer. Do NOT spawn further sub-agents — do the review yourself."**
 
    Don't split the work across agents — redundancy catches more than specialization. If one agent misses something, another is likely to find it.
 

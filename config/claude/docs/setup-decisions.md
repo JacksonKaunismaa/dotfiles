@@ -34,12 +34,12 @@ Reference repos:
 
 **`rules/agents-and-delegation.md` cleanup:**
 - Removed `core:codex` and `codex-reviewer` — don't use Codex CLI
-- Removed `efficient-explorer` — redundant with built-in `Explore` subagent_type in Task tool
+- Removed `efficient-explorer` — redundant with built-in `Explore` subagent_type in Agent tool
 - Changed `code-reviewer` → `superpowers:code-reviewer` — point to actual plugin agent
 - Added **Claude Code MCP** section documenting "nested orchestration" pattern:
   - Use `mcp__claude-code-mcp__claude_code` when you need an orchestrator that spawns its own subagents
   - Nested instance manages complexity internally, returns clean summary
-  - Saves top-level context vs. spawning many Task subagents directly
+  - Saves top-level context vs. spawning many Agent subagents directly
 
 ---
 
