@@ -8,6 +8,7 @@ USAGE=$(cat <<-END
         --tmux       install tmux
         --zsh        install zsh
         --extras     install extra dependencies
+        --force      force redownload of oh-my-zsh and plugins
         --is-root    run commands without sudo
         --no-pkg     skip package manager installs (for restricted environments)
 
@@ -96,66 +97,64 @@ if [ "$no_pkg" = true ]; then
             echo "make sure ~/.local/bin is in your PATH"
         fi
     fi
-elif [ $machine == "Arch" ]; then
-    DOT_DIR=$(dirname $(realpath $0))
+elif [ "$machine" == "Arch" ]; then
     maybe_sudo pacman -Syu
-    [ $zsh == true ] && maybe_sudo pacman -S zsh
-    [ $tmux == true ] && maybe_sudo pacman -S tmux
-    
-    if [ $extras == true ]; then
-        maybe_sudo pacman -S ripgrep jless rustup less htop
+    [ "$zsh" == true ] && maybe_sudo pacman -S zsh
+    [ "$tmux" == true ] && maybe_sudo pacman -S tmux
+
+    if [ "$extras" == true ]; then
+        maybe_sudo pacman -S --needed ripgrep jless rustup less htop \
+            bat duf eza git-delta zoxide fd sd btop jq
         # Check if yay is installed, if not install it
         if ! command -v yay &> /dev/null; then
             echo "Installing yay..."
             maybe_sudo pacman -S --needed git base-devel
-            git clone https://aur.archlinux.org/yay.git
-            cd yay
-            maybe_sudo makepkg -si
-            cd ..
-            rm -rf yay
+            YAY_DIR=$(mktemp -d)
+            git clone https://aur.archlinux.org/yay.git "$YAY_DIR/yay"
+            (cd "$YAY_DIR/yay" && makepkg -si)
+            rm -rf "$YAY_DIR"
         fi
-        yay -S dust peco 
+        yay -S dust peco
     fi
 
 # Installing on other Linux distributions with apt
-elif [ $machine == "Linux" ]; then
-    DOT_DIR=$(dirname $(realpath $0))
+elif [ "$machine" == "Linux" ]; then
     maybe_sudo apt-get update -y
-    [ $zsh == true ] && maybe_sudo apt-get install -y zsh
-    [ $tmux == true ] && maybe_sudo apt-get install -y tmux
-    
-    if [ $extras == true ]; then
-        maybe_sudo apt-get install -y ripgrep less htop
+    [ "$zsh" == true ] && maybe_sudo apt-get install -y zsh
+    [ "$tmux" == true ] && maybe_sudo apt-get install -y tmux
 
-				echo "Installing homebrew..."
-        yes | curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash
-				echo "Homebrew installed, adding to path..."
-				eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    if [ "$extras" == true ]; then
+        maybe_sudo apt-get install -y ripgrep less htop \
+            bat duf git-delta zoxide fd-find btop jq
 
-				echo "Installing rust..."
-        yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-				echo "Sourcing rust env..."
-        . "$HOME/.cargo/env" 
-        yes | cargo install 
-				yes | brew install dust jless peco
+        echo "Installing homebrew..."
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo "Homebrew installed, adding to path..."
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+        echo "Installing rust..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        echo "Sourcing rust env..."
+        . "$HOME/.cargo/env"
+        # eza and sd aren't in default apt repos — install via cargo
+        cargo install eza sd
+        brew install dust jless peco
     fi
 
 # Installing on mac with homebrew
-elif [ $machine == "Mac" ]; then
-    yes | maybe_sudo brew install coreutils  # Mac won't have realpath before coreutils installed
+elif [ "$machine" == "Mac" ]; then
+    maybe_sudo brew install coreutils  # Mac won't have realpath before coreutils installed
 
-    if [ $extras == true ]; then
-        yes | maybe_sudo brew install ripgrep dust jless
+    if [ "$extras" == true ]; then
+        maybe_sudo brew install ripgrep dust jless \
+            bat duf eza git-delta zoxide fd sd btop jq peco
 
-        yes | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        . "$HOME/.cargo/env" 
-        yes | cargo install 
-        yes | maybe_sudo brew install peco
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        . "$HOME/.cargo/env"
     fi
 
-    DOT_DIR=$(dirname $(realpath $0))
-    [ $zsh == true ] && yes | maybe_sudo brew install zsh
-    [ $tmux == true ] && yes | maybe_sudo brew install tmux
+    [ "$zsh" == true ] && maybe_sudo brew install zsh
+    [ "$tmux" == true ] && maybe_sudo brew install tmux
     maybe_sudo defaults write -g InitialKeyRepeat -int 10 # normal minimum is 15 (225 ms)
     maybe_sudo defaults write -g KeyRepeat -int 1 # normal minimum is 2 (30 ms)
     maybe_sudo defaults write -g com.apple.mouse.scaling 5.0
@@ -167,15 +166,23 @@ echo "Done installing basics."
 # Ensure local bin is in PATH for oh-my-zsh installer to find zsh
 export PATH="$HOME/.local/bin:$PATH"
 
+# Install Claude Code CLI (independent of oh-my-zsh)
+if ! command -v claude &>/dev/null; then
+    echo "Installing Claude Code..."
+    curl -fsSL https://claude.ai/install.sh | sh
+else
+    echo "Claude Code already installed"
+fi
+
 # Setting up oh my zsh and oh my zsh plugins
 ZSH=~/.oh-my-zsh
 ZSH_CUSTOM=$ZSH/custom
-if [ -d $ZSH ] && [ "$force" = "false" ]; then
-    echo "Skipping download of oh-my-zsh and related plugins, pass --force to force redeownload"
+if [ -d "$ZSH" ] && [ "$force" = "false" ]; then
+    echo "Skipping download of oh-my-zsh and related plugins, pass --force to force redownload"
 else
     echo " --------- INSTALLING DEPENDENCIES ⏳ ----------- "
-    rm -rf $ZSH
-    yes | sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    rm -rf "$ZSH"
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
 
     git clone https://github.com/romkatv/powerlevel10k.git \
         ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/themes/powerlevel10k
@@ -187,7 +194,7 @@ else
         ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
 
     git clone https://github.com/zsh-users/zsh-completions \
-        ${ZSH_CUSTOM:=~/.oh-my-zsh/custom}/plugins/zsh-completions
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-completions
 
     git clone https://github.com/zsh-users/zsh-history-substring-search \
         ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-history-substring-search
@@ -196,10 +203,7 @@ else
     git clone https://github.com/VundleVim/Vundle.vim.git ~/.vim/bundle/Vundle.vim
 
     git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
-    yes | ~/.fzf/install
-
-    # Install Claude Code CLI
-    curl -fsSL https://claude.ai/install.sh | sh
+    ~/.fzf/install --all
 
     # NO_ASK_OPENAI_API_KEY=1 zsh -c "$(curl -fsSL https://raw.githubusercontent.com/hmirin/ask.sh/main/install.sh)"
 

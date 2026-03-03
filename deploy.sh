@@ -11,7 +11,7 @@ USAGE=$(cat <<-END
 END
 )
 
-export DOT_DIR=$(dirname $(realpath $0))
+export DOT_DIR=$(dirname "$(realpath "$0")")
 
 LOC="remote"
 VIM="true"
@@ -74,6 +74,20 @@ sed "s|__HOME__|$HOME|g" $DOT_DIR/config/claude/settings.json.template > $HOME/.
 if [ -f "$DOT_DIR/config/claude/ntfy.conf" ]; then
     cp $DOT_DIR/config/claude/ntfy.conf $HOME/.claude/ntfy.conf
 fi
+# If root, add infinite permissions (no confirmation prompts)
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Root detected: adding full permissions to Claude Code settings"
+    python3 -c "
+import json
+path = '$HOME/.claude/settings.json'
+with open(path) as f:
+    s = json.load(f)
+s['permissions'] = {'allow': ['Bash(*)', 'Edit', 'Write', 'mcp__*']}
+with open(path, 'w') as f:
+    json.dump(s, f, indent=2)
+    f.write('\n')
+"
+fi
 echo "deployed Claude Code config"
 
 # Build Rust tools (if cargo is available)
@@ -93,8 +107,14 @@ fi
 # zshrc setup
 echo "source $DOT_DIR/config/zshrc.sh" > $HOME/.zshrc
 # source remote-specific aliases if they exist
-if [ $LOC = 'remote' ] && [ -f "$DOT_DIR/config/aliases_speechmatics.sh" ]; then
+if [ "$LOC" = 'remote' ] && [ -f "$DOT_DIR/config/aliases_speechmatics.sh" ]; then
     echo "source $DOT_DIR/config/aliases_speechmatics.sh" >> $HOME/.zshrc
+fi
+# cld alias: root gets plain claude, non-root gets dangerously-skip-permissions
+if [ "$(id -u)" -eq 0 ]; then
+    echo 'alias cld="claude"' >> $HOME/.zshrc
+else
+    echo 'alias cld="claude --dangerously-skip-permissions"' >> $HOME/.zshrc
 fi
 
 # Removed since we do agent forwarding now
