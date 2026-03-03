@@ -184,7 +184,7 @@ Context: [one sentence — what part of the system, what the code does]
 What you said: "[direct quote of user's response]"
 What I did: [action taken — fix description, investigation result, AUDIT-OK added, etc.]
 Ambiguity?: [contradictions or edge cases in user's instructions, or "None"]
-Status: Done | Deferred | Investigating
+Status: ✅ Done | ⏭️ Skipped | ❌ Reverted | 🔍 Investigating | 🔶 Partial | etc.
 ```
 
 ### Example
@@ -196,7 +196,7 @@ Context: scorer.py — parses model output into numeric scores during eval pipel
 What you said: "Investigate this deeper — I want to know if this has actually eaten any real errors"
 What I did: Checked last 5 result dirs, found 3 instances where ValueError was caught and returned score=0. Fixed: removed broad except, errors now propagate. Added targeted except for json.JSONDecodeError only.
 Ambiguity?: None
-Status: Done
+Status: ✅ Done
 ────────────────────────────────────────
 #: 8
 Finding: type: ignore without justification
@@ -204,7 +204,7 @@ Context: config.py — frozen pydantic model using cached_property
 What you said: "Add audit okay with that explanation, seems fine"
 What I did: Added # AUDIT-OK: cached property on frozen pydantic model
 Ambiguity?: You also said "too many audit okays" — but this one you explicitly approved.
-Status: Done
+Status: ✅ Done
 ```
 
 ### Rules

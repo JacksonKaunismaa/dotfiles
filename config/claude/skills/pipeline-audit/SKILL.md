@@ -127,3 +127,30 @@ For each pipeline with issues, list findings:
 - How many are robust (green)
 - How many need work (yellow/red)
 - Highest-priority fixes (the ones that would save the most time/money if a crash happened)
+
+## Post-audit report
+
+**Trigger: When the user asks for a "post-audit report", "wrap-up", or "summary" after iteratively working through findings.**
+
+After iterating through findings (investigations, fixes, dismissals), produce a summary showing the lifecycle of every finding so the user can confirm everything was handled correctly.
+
+### Format
+
+For each finding, in original numbering order:
+
+```
+#: [number]
+Finding: [one-line description from the original report]
+Context: [one sentence — which pipeline, what part of it]
+What you said: "[direct quote of user's response]"
+What I did: [action taken — fix description, investigation result, etc.]
+Ambiguity?: [contradictions or edge cases in user's instructions, or "None"]
+Status: ✅ Done | ⏭️ Skipped | ❌ Reverted | 🔍 Investigating | 🔶 Partial | etc.
+```
+
+### Rules
+
+- **Every finding must appear** — nothing silently dropped
+- **Quote the user directly** — don't paraphrase; quotes are the evidence trail
+- **Flag ambiguity honestly** — if the user said contradictory things, note both
+- **Deferred items stand out** — anything not "Done" needs to be obvious

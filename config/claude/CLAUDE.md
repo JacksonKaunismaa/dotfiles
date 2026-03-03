@@ -11,7 +11,7 @@ Claude config (`~/.claude/`) is symlinked to `~/Work-Stuff/dotfiles/config/claud
 ## Default Behaviors
 
 - **Interview before planning** — use `/spec-interview-research` for experiments, `/spec-interview` for product features
-- **Plan before implementing** — use `EnterPlanMode` for non-trivial tasks; don't write code until plan approved
+- **Brainstorm before implementing** — use `/brainstorming` (not `EnterPlanMode`) for non-trivial tasks; don't write code until approach is clear
 - **Use existing code** for experiments — correct hyperparams, full data, validated metrics; ad-hoc only for dry runs
 - **Delegate to agents** for non-trivial work — use agent teams for parallelizable tasks, subagents for focused single-output tasks
 - **Commit frequently** after every meaningful change
