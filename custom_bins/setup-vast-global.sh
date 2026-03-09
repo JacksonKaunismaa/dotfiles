@@ -7,6 +7,5 @@ echo "Installing uv..."
 yes | curl -LsSf https://astral.sh/uv/install.sh | sh
 echo "Finished deploying"
 apt-get install -y vim
-echo "Installing screen..."
-apt-get install -y screen
+# tmux is already installed via install.sh --tmux
 echo "Done installing deps!"
