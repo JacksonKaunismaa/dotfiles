@@ -169,7 +169,7 @@ export PATH="$HOME/.local/bin:$PATH"
 # Install Claude Code CLI (independent of oh-my-zsh)
 if ! command -v claude &>/dev/null; then
     echo "Installing Claude Code..."
-    curl -fsSL https://claude.ai/install.sh | sh
+    curl -fsSL https://claude.ai/install.sh | bash
 else
     echo "Claude Code already installed"
 fi
