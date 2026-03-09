@@ -4,40 +4,40 @@
 # Note: context7 is an MCP server, not a plugin — always available regardless of profile.
 
 base:
-  - core-toolkit
+  - core
   - code-simplifier
   - hookify
-  - security-guidance
   - commit-commands
   - superpowers
+  - pyright-lsp
 
 profiles:
   code:
     comment: "Software projects"
     enable:
-      - code-toolkit
-      - workflow-toolkit
+      - code
+      - workflow
 
   research:
     comment: "Experiments and evals"
     enable:
-      - research-toolkit
-      - writing-toolkit
-      - workflow-toolkit
-      - viz-toolkit
+      - research
+      - writing
+      - workflow
+      - viz
 
   writing:
     comment: "Papers and docs"
     enable:
-      - writing-toolkit
-      - viz-toolkit
-      - workflow-toolkit
+      - writing
+      - viz
+      - workflow
 
   full:
     comment: "Everything enabled"
     enable:
-      - research-toolkit
-      - writing-toolkit
-      - code-toolkit
-      - workflow-toolkit
-      - viz-toolkit
+      - research
+      - writing
+      - code
+      - workflow
+      - viz

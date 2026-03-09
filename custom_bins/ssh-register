@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
 import re
-import tkinter as tk
 from pathlib import Path
 import argparse
-
 import subprocess
 import shutil
-#def get_clipboard_content():
-#    root = tk.Tk()
-#    root.withdraw()  # Hide the tkinter window
-#    try:
-#        return root.clipboard_get()
-#    except tk.TclError:
-#        return None
-#    finally:
-#        root.destroy()
+
+
 def get_clipboard_content():
-    
-    # Use wl-paste for reliable clipboard access in Wayland
     if shutil.which('wl-paste'):
         try:
             result = subprocess.run(['wl-paste'], capture_output=True, text=True, timeout=5)
@@ -25,54 +14,142 @@ def get_clipboard_content():
                 return result.stdout.strip() if result.stdout.strip() else None
         except (subprocess.TimeoutExpired, subprocess.SubprocessError):
             pass
-    
-    # Fallback to tkinter (unreliable in mixed Wayland/X11 environments)
-    try:
-        root = tk.Tk()
-        root.withdraw()
-        content = root.clipboard_get()
-        root.destroy()
-        return content if content else None
-    except tk.TclError:
-        return None
+    return None
+
+
+# SSH flags that consume the next token as their argument
+_FLAGS_WITH_ARGS = set('bcDeFIiJLlmOopQRSWw')
+
 
 def parse_ssh_command(command):
-    # Pattern to match SSH command components - now handles optional port
-    # This pattern matches: ssh user@host with optional -p port and other flags
-    pattern = r'ssh\s+([^@\s]+)@([^\s]+)(?:\s+.*)?'
-    match = re.match(pattern, command)
-    
-    if not match:
-        raise ValueError("Invalid SSH command format")
-    
-    user, host = match.groups()
-    
-    # Extract port if specified with -p flag
-    port_pattern = r'-p\s+(\d+)'
-    port_match = re.search(port_pattern, command)
-    port = port_match.group(1) if port_match else '22'
-    
+    """Parse an SSH command into connection components.
+
+    Handles flags in any order, bundled boolean flags (-Nfv), flag values
+    with or without spaces (-p38374 / -p 38374), -l user, -L/-R/-D
+    forwarding, -J ProxyJump, and ssh:// URIs.
+    """
+    parts = command.strip().split()
+    if not parts or parts[0] != 'ssh':
+        raise ValueError("Command must start with 'ssh'")
+
+    user = None
+    host = None
+    port = '22'
+    forwards = []   # (type, spec) — e.g. ('L', '8080:localhost:8080')
+    proxy_jump = None
+
+    i = 1  # skip 'ssh'
+    while i < len(parts):
+        arg = parts[i]
+
+        if arg == '--':
+            # Everything after -- is the remote command, stop parsing
+            break
+
+        if arg.startswith('-') and len(arg) >= 2 and not arg.startswith('--'):
+            flags = arg[1:]
+            j = 0
+            while j < len(flags):
+                flag = flags[j]
+                if flag in _FLAGS_WITH_ARGS:
+                    # Value is the rest of this token, or the next token
+                    rest = flags[j + 1:]
+                    if rest:
+                        value = rest
+                    elif i + 1 < len(parts):
+                        i += 1
+                        value = parts[i]
+                    else:
+                        raise ValueError(f"Flag -{flag} requires an argument")
+
+                    if flag == 'p':
+                        port = value
+                    elif flag == 'l':
+                        user = value
+                    elif flag in ('L', 'R', 'D'):
+                        forwards.append((flag, value))
+                    elif flag == 'J':
+                        proxy_jump = value
+                    break  # rest of chars were consumed as the value
+                else:
+                    j += 1  # boolean flag (-v, -N, -f, etc.)
+
+        elif arg.startswith('ssh://'):
+            # ssh://[user@]host[:port]
+            uri = arg[len('ssh://'):]
+            if '@' in uri:
+                user, uri = uri.rsplit('@', 1)
+            if ':' in uri:
+                host, uri_port = uri.rsplit(':', 1)
+                if uri_port.isdigit():
+                    port = uri_port
+            else:
+                host = uri
+
+        elif '@' in arg:
+            user, host = arg.rsplit('@', 1)
+
+        elif host is None:
+            # First non-flag, non-user@host token is the bare hostname
+            host = arg
+
+        else:
+            # Remaining args are the remote command, stop parsing
+            break
+
+        i += 1
+
+    if not host:
+        raise ValueError("Could not find hostname in SSH command")
+
     return {
         'user': user,
         'host': host,
-        'port': port
+        'port': port,
+        'forwards': forwards,
+        'proxy_jump': proxy_jump,
     }
 
+def _cli_fwd_to_config(spec):
+    """Convert CLI -L/-R format to ssh_config LocalForward/RemoteForward format.
+
+    CLI:    [bind_addr:]port:host:hostport  (colon-separated)
+    Config: [bind_addr:]port host:hostport  (space before target)
+    DynamicForward (-D) is just a port, no conversion needed.
+    """
+    parts = spec.split(':')
+    if len(parts) == 3:
+        # port:host:hostport → port host:hostport
+        return f"{parts[0]} {parts[1]}:{parts[2]}"
+    if len(parts) == 4:
+        # bind_addr:port:host:hostport → bind_addr:port host:hostport
+        return f"{parts[0]}:{parts[1]} {parts[2]}:{parts[3]}"
+    # DynamicForward or already in config format
+    return spec
+
+
 def generate_config_entry(ssh_info, alias=None):
-    # Use alias if provided, otherwise use host
-    host_name = alias if alias else ssh_info['host']
-    
-    # Only include Port line if it's not the default port 22
-    port_line = f"    Port {ssh_info['port']}\n" if ssh_info['port'] != '22' else ""
-    
-    config_template = f"""Host {host_name}
-    HostName {ssh_info['host']}
-    User {ssh_info['user']}
-{port_line}    IdentityFile ~/.ssh/id_ed25519.1
-    # RemoteCommand none
-    ForwardAgent yes
-"""
-    return config_template
+    # Use glob pattern for aliases so _cmdless suffix works with Host *_cmdless
+    if alias:
+        host_pattern = f"{alias}*"
+    else:
+        host_pattern = ssh_info['host']
+    lines = [
+        f"Host {host_pattern}",
+        f"    HostName {ssh_info['host']}",
+    ]
+    if ssh_info.get('user'):
+        lines.append(f"    User {ssh_info['user']}")
+    if ssh_info['port'] != '22':
+        lines.append(f"    Port {ssh_info['port']}")
+    lines.append("    IdentityFile ~/.ssh/id_ed25519.1")
+    if ssh_info.get('proxy_jump'):
+        lines.append(f"    ProxyJump {ssh_info['proxy_jump']}")
+    fwd_directives = {'L': 'LocalForward', 'R': 'RemoteForward', 'D': 'DynamicForward'}
+    for fwd_type, spec in ssh_info.get('forwards', []):
+        lines.append(f"    {fwd_directives[fwd_type]} {_cli_fwd_to_config(spec)}")
+    lines.append("    ForwardAgent yes")
+    return '\n'.join(lines) + '\n'
 
 def read_ssh_config():
     ssh_config_path = Path.home() / '.ssh' / 'config'
@@ -81,21 +158,24 @@ def read_ssh_config():
     with open(ssh_config_path, 'r') as f:
         return f.read()
 
+def _host_matches(block, host_name):
+    """Check if a config block's Host line matches host_name or host_name*."""
+    for prefix in (f'Host {host_name}\n', f'Host {host_name}*\n'):
+        if block.startswith(prefix):
+            return True
+    return False
+
+
 def find_existing_entry(config_content, host_name):
-    # Split config into blocks
     blocks = re.split(r'\n(?=Host\s)', config_content.strip())
-    # Find block that matches the host name (could be IP or alias)
     for block in blocks:
-        if block.startswith(f'Host {host_name}\n'):
+        if _host_matches(block, host_name):
             return block.strip()
     return None
 
 def remove_existing_entry(config_content, host_name):
-    # Split config into blocks
     blocks = re.split(r'\n(?=Host\s)', config_content.strip())
-    # Filter out blocks that match the host name
-    new_blocks = [block for block in blocks if not block.startswith(f'Host {host_name}\n')]
-    # Join blocks back together
+    new_blocks = [block for block in blocks if not _host_matches(block, host_name)]
     return '\n\n'.join(block.rstrip() for block in new_blocks)
 
 def main():
@@ -132,7 +212,13 @@ def main():
         
         # Print the config entry
         print(f"\nParsed SSH command: {command.strip()}")
-        print(f"User: {ssh_info['user']}, Host: {ssh_info['host']}, Port: {ssh_info['port']}")
+        user_str = ssh_info['user'] or '(default)'
+        print(f"User: {user_str}, Host: {ssh_info['host']}, Port: {ssh_info['port']}")
+        if ssh_info.get('proxy_jump'):
+            print(f"ProxyJump: {ssh_info['proxy_jump']}")
+        for fwd_type, spec in ssh_info.get('forwards', []):
+            labels = {'L': 'Local', 'R': 'Remote', 'D': 'Dynamic'}
+            print(f"{labels[fwd_type]}Forward: {spec}")
         if alias:
             print(f"Alias: {alias}")
         print("\nGenerated SSH config entry:")

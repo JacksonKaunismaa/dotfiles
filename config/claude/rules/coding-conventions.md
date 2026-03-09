@@ -80,6 +80,10 @@ if __name__ == "__main__":
 
 This is a preference order, not a mandate. Match the tool to the job.
 
+## Code Navigation
+
+**Prefer LSP over Grep/Glob for semantic code navigation.** Use `goToDefinition`, `findReferences`, `hover`, `documentSymbol`, call hierarchy, etc. instead of text-searching for symbol names. Reserve Grep/Glob for text patterns, string literals, and file finding.
+
 ## CLI Tools Available
 
 ripgrep (`rg`), fd, fzf, bat, eza, zoxide (`z`), delta, jq, jless, btop, dust, duf, sd (prefer over `sed`), npm/npx

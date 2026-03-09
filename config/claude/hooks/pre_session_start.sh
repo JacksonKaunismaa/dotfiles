@@ -5,8 +5,6 @@ set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
 CLAUDE_MD="$REPO_ROOT/CLAUDE.md"
-DOCS_DIR="${REPO_ROOT}/docs"  # Formerly ai_docs
-
 # Get terminal width for formatted output
 TERM_WIDTH=$(tput cols 2>/dev/null || echo 80)
 
@@ -109,35 +107,6 @@ elif [[ -d "$REPO_ROOT" ]]; then
     echo "   Create one to document project patterns, setup, and conventions"
 fi
 
-# Check docs/ staleness
-if [[ -d "$DOCS_DIR" ]]; then
-    STALE_COUNT=0
-
-    for doc in "$DOCS_DIR"/*.md; do
-        [[ ! -f "$doc" ]] && continue
-
-        DAYS=$(check_doc_age "$doc")
-        doc_name=$(basename "$doc")
-
-        if [[ $DAYS -gt 365 ]]; then
-            if [[ $HAS_WARNINGS -eq 0 ]]; then
-                echo ""
-                echo "$(printf '%.0s─' $(seq 1 $TERM_WIDTH))"
-                echo "⚠️  Project Documentation Status"
-                echo "$(printf '%.0s─' $(seq 1 $TERM_WIDTH))"
-                HAS_WARNINGS=1
-            fi
-
-            if [[ $STALE_COUNT -eq 0 ]]; then
-                echo ""
-                echo "$WARN Stale documentation in docs/"
-            fi
-
-            echo "   • $doc_name (${DAYS} days old)"
-            STALE_COUNT=$((STALE_COUNT + 1))
-        fi
-    done
-fi
 
 # Print closing line if we had warnings
 if [[ $HAS_WARNINGS -eq 1 ]]; then

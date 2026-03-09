@@ -33,9 +33,37 @@ if [ "$HOOK_EVENT" = "UserPromptSubmit" ]; then
     INPUT_KEYS=$(echo "$INPUT" | jq -r 'keys | join(", ")' 2>/dev/null)
     # Try known field names for the user's prompt
     USER_PROMPT=$(echo "$INPUT" | jq -r '.user_prompt // .prompt // .user_message // empty')
+
+    # Skip task notifications — these are background task completions injected by
+    # Claude Code, not real user messages. They reset the timer and kill notifications.
+    case "$USER_PROMPT" in
+        '<task-notification>'*)
+            echo "  -> skipped task-notification (${#USER_PROMPT} chars)" >> "$LOG_FILE"
+            exit 0
+            ;;
+    esac
+
+    # Compute time since last UserPromptSubmit for this session
+    DELTA_S=""
+    PREV_TS=""
+    if [ -f "$TIMESTAMP_FILE" ]; then
+        PREV_TS=$(jq -r '.start_time // empty' "$TIMESTAMP_FILE" 2>/dev/null)
+        [ -n "$PREV_TS" ] && DELTA_S=$((NOW - PREV_TS))
+    fi
+
+    # Burst detection: if timestamp file was written <3s ago, dump full diagnostics
+    BURST_FLAG=""
+    if [ -n "$DELTA_S" ] && [ "$DELTA_S" -le 3 ]; then
+        BURST_FLAG=" BURST"
+        PROMPT_HEAD=$(printf '%s' "$USER_PROMPT" | head -c 300 | tr '\n' ' ')
+        ALL_FIELDS=$(echo "$INPUT" | jq -c 'to_entries | map(select(.key != "prompt" and .key != "user_prompt" and .key != "user_message" and .key != "transcript_path")) | from_entries' 2>/dev/null)
+        echo "  -> BURST delta=${DELTA_S}s prompt (${#USER_PROMPT} chars): ${PROMPT_HEAD}" >> "$LOG_FILE"
+        echo "  -> BURST fields: ${ALL_FIELDS}" >> "$LOG_FILE"
+    fi
+
     jq -n --arg ts "$NOW" --arg prompt "$USER_PROMPT" \
         '{"start_time": $ts, "user_prompt": $prompt}' > "$TIMESTAMP_FILE"
-    echo "  -> wrote timestamp $NOW, input_keys=[$INPUT_KEYS], prompt_len=${#USER_PROMPT}" >> "$LOG_FILE"
+    echo "  -> wrote timestamp $NOW, input_keys=[$INPUT_KEYS], prompt_len=${#USER_PROMPT}, delta=${DELTA_S:-first}s${BURST_FLAG}" >> "$LOG_FILE"
     exit 0
 fi
 
@@ -57,7 +85,13 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
     ELAPSED_SECS=$((NOW - START_TIME))
     ELAPSED_MINS=$((ELAPSED_SECS / 60))
     INPUT_KEYS=$(echo "$INPUT" | jq -r 'keys | join(", ")' 2>/dev/null)
-    echo "  -> read timestamp $START_TIME, now=$NOW, elapsed=${ELAPSED_MINS}m, input_keys=[$INPUT_KEYS]" >> "$LOG_FILE"
+    STOP_REASON=$(echo "$INPUT" | jq -r '.reason // empty')
+    echo "  -> read timestamp $START_TIME, now=$NOW, elapsed=${ELAPSED_MINS}m (${ELAPSED_SECS}s), reason=$STOP_REASON, input_keys=[$INPUT_KEYS]" >> "$LOG_FILE"
+
+    # Log near-misses: 5-8 minutes = likely would have fired without timer reset
+    if [ "$ELAPSED_MINS" -ge 5 ] && [ "$ELAPSED_MINS" -lt "$THRESHOLD_MINS" ]; then
+        echo "  -> NEAR-MISS ${ELAPSED_MINS}m (threshold=${THRESHOLD_MINS}m)" >> "$LOG_FILE"
+    fi
 
     if [ "$ELAPSED_MINS" -ge "$THRESHOLD_MINS" ]; then
         # Load ntfy config
@@ -111,9 +145,6 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
                 echo "  -> no transcript_path in hook input" >> "$LOG_FILE"
             fi
         fi
-
-        # Also grab the stop reason
-        STOP_REASON=$(echo "$INPUT" | jq -r '.reason // empty')
 
         # Try summarizing via Haiku API call
         SUMMARY=""
@@ -174,13 +205,15 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
         TITLE="CC Done (${ELAPSED_MINS}m) — ${PROJECT}"
         MSG="$SUMMARY"
 
-        # Send notification
+        # Send notification, then remove timestamp file to prevent duplicate notifications
+        # (multiple Stop events can fire against the same start time)
         echo "  -> SENDING: title='$TITLE' body='${MSG:0:100}...' (start=$START_TIME)" >> "$LOG_FILE"
         curl -s -u "$NTFY_USERNAME:$NTFY_PASSWORD" \
             -d "$MSG" \
             -H "Title: $TITLE" \
             -H "Priority: urgent" \
             "https://$NTFY_URL/$NTFY_TOPIC_CC" >/dev/null 2>&1
+        rm -f "$TIMESTAMP_FILE"
     else
         echo "  -> below threshold, no notification" >> "$LOG_FILE"
     fi
