@@ -47,6 +47,7 @@ fi
 "$DOT_DIR/deploy-claude.sh"
 
 # Build Rust tools (if cargo is available)
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 if command -v cargo &>/dev/null; then
     echo "building Rust tools..."
     for proj in "$DOT_DIR"/builds/*/Cargo.toml; do
