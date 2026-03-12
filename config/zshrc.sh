@@ -68,6 +68,9 @@ fi
 
 export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 export EDITOR=vim
+export LESSCHARSET=utf-8
+export LESSOPEN="| $DOT_DIR/config/lessopen.sh %s"
+export LESS="-R"
 export GREP_COLORS="ms=01;31:mc=01;31:sl=:cx=:fn=36:ln=32:bn=32:se=36"
 
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=5'

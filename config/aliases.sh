@@ -26,7 +26,9 @@ alias mkdir='mkdir -p'
 alias h='head'
 alias t='tail'
 # alias rl="readlink -f"
-alias less='bat'
+# less uses bat as a preprocessor (LESSOPEN) for syntax highlighting,
+# while keeping native less features like :n/:p for multi-file navigation.
+# lesser = raw less with no LESSOPEN preprocessing
 lesser() { LESSOPEN= command less "$@"; }
 # fd is now the real fd-find binary (installed via pacman)
 alias ff='find . -type f -name'
