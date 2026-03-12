@@ -86,17 +86,18 @@
     "code-simplifier@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
     "hookify@claude-plugins-official": true,
-    "security-guidance@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "plugin-dev@claude-plugins-official": true,
-    "core-toolkit@ai-safety-plugins": true,
-    "research-toolkit@ai-safety-plugins": true,
-    "writing-toolkit@ai-safety-plugins": true,
-    "code-toolkit@ai-safety-plugins": true,
-    "workflow-toolkit@ai-safety-plugins": true,
-    "viz-toolkit@ai-safety-plugins": true
+    "core@ai-safety-plugins": true,
+    "research@ai-safety-plugins": true,
+    "writing@ai-safety-plugins": true,
+    "code@ai-safety-plugins": true,
+    "workflow@ai-safety-plugins": true,
+    "viz@ai-safety-plugins": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "dev-browser@dev-browser-marketplace": true
   },
   "alwaysThinkingEnabled": true,
   "skipDangerousModePermissionPrompt": true,
@@ -104,6 +105,20 @@
   "statusLine": {
     "type": "command",
     "command": "__HOME__/Work-Stuff/dotfiles/custom_bins/claude-statusline"
+  },
+  "extraKnownMarketplaces": {
+    "ai-safety-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "yulonglin/ai-safety-plugins"
+      }
+    },
+    "dev-browser-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "sawyerhood/dev-browser"
+      }
+    }
   },
   "attribution": {
     "commit": "",

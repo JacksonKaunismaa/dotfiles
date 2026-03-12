@@ -146,8 +146,11 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
             fi
         fi
 
-        # Try summarizing via Haiku API call
-        SUMMARY=""
+        TITLE="CC Done (${ELAPSED_MINS}m) — ${PROJECT}"
+        rm -f "$TIMESTAMP_FILE"
+
+        # Background the entire summarize+send flow so the hook exits instantly.
+        # Haiku summary with fallback to raw text — only one notification sent.
         HAIKU_INPUT=""
         if [ -n "$LAST_ASSISTANT_TEXT" ]; then
             HAIKU_INPUT="${LAST_ASSISTANT_TEXT:0:4000}"
@@ -155,65 +158,72 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
             HAIKU_INPUT="[No text output — assistant used these tools: $TOOL_NAMES]"
         fi
 
-        if [ -n "$HAIKU_INPUT" ] && [ -n "$ANTHROPIC_API_KEY" ]; then
-            echo "  -> haiku prompt: user_asked='${USER_PROMPT:0:1000}' assistant_output='${HAIKU_INPUT:0:1000}'" >> "$LOG_FILE"
-            PROMPT_SECTION=""
-            [ -n "$USER_PROMPT" ] && PROMPT_SECTION="User message: $USER_PROMPT\n\n"
-            API_BODY=$(jq -n \
-                --arg text "$HAIKU_INPUT" \
-                --arg ctx "$PROMPT_SECTION" \
-                '{
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 150,
-                    "system": "Generate a phone notification summary of a conversation between a user and a coding assistant. Output ONLY a factual summary of what was done (max 280 chars). Never ask questions. Never say you lack context. If the text is unclear, summarize what you can see. No preamble.",
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": ($ctx + "Coding assistant reply:\n" + $text)
-                        }
-                    ]
-                }')
+        (
+            echo "  -> [bg] subshell started pid=$$ haiku_input_len=${#HAIKU_INPUT} api_key=${ANTHROPIC_API_KEY:+set}" >> "$LOG_FILE"
+            SUMMARY=""
 
-            SUMMARY=$(curl -s --max-time 10 \
-                -H "x-api-key: $ANTHROPIC_API_KEY" \
-                -H "anthropic-version: 2023-06-01" \
-                -H "content-type: application/json" \
-                -d "$API_BODY" \
-                "https://api.anthropic.com/v1/messages" \
-                | jq -r '.content[0].text // empty' 2>/dev/null)
+            if [ -n "$HAIKU_INPUT" ] && [ -n "$ANTHROPIC_API_KEY" ]; then
+                PROMPT_SECTION=""
+                [ -n "$USER_PROMPT" ] && PROMPT_SECTION="User message: $USER_PROMPT\n\n"
+                API_BODY=$(jq -n \
+                    --arg text "$HAIKU_INPUT" \
+                    --arg ctx "$PROMPT_SECTION" \
+                    '{
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 150,
+                        "system": "Generate a phone notification summary of a conversation between a user and a coding assistant. Output ONLY a factual summary of what was done (max 280 chars). Never ask questions. Never say you lack context. If the text is unclear, summarize what you can see. No preamble.",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": ($ctx + "Coding assistant reply:\n" + $text)
+                            }
+                        ]
+                    }')
 
-            echo "  -> haiku summary: ${SUMMARY:0:100}..." >> "$LOG_FILE"
-        fi
+                HAIKU_RAW=$(curl -s --max-time 15 -w "\n%{http_code}" \
+                    -H "x-api-key: $ANTHROPIC_API_KEY" \
+                    -H "anthropic-version: 2023-06-01" \
+                    -H "content-type: application/json" \
+                    -d "$API_BODY" \
+                    "https://api.anthropic.com/v1/messages" 2>&1)
+                HAIKU_EXIT=$?
+                HAIKU_HTTP=$(echo "$HAIKU_RAW" | tail -1)
+                HAIKU_BODY=$(echo "$HAIKU_RAW" | sed '$d')
+                SUMMARY=$(echo "$HAIKU_BODY" | jq -r '.content[0].text // empty' 2>/dev/null)
 
-        # Fallback: truncated raw text → tool names → stop reason
-        if [ -z "$SUMMARY" ]; then
-            if [ -n "$LAST_ASSISTANT_TEXT" ]; then
-                SUMMARY="${LAST_ASSISTANT_TEXT:0:280}"
-                [ ${#LAST_ASSISTANT_TEXT} -gt 280 ] && SUMMARY="${SUMMARY}..."
-            elif [ -n "$TOOL_NAMES" ]; then
-                SUMMARY="Used tools: $TOOL_NAMES"
-            elif [ -n "$STOP_REASON" ]; then
-                SUMMARY="$STOP_REASON"
+                echo "  -> [bg] haiku: exit=$HAIKU_EXIT http=$HAIKU_HTTP summary='${SUMMARY:0:100}' raw='${HAIKU_BODY:0:200}'" >> "$LOG_FILE"
             else
-                SUMMARY="(no summary available)"
+                echo "  -> [bg] skipping haiku: haiku_input=${HAIKU_INPUT:+(set)} api_key=${ANTHROPIC_API_KEY:+(set)}" >> "$LOG_FILE"
             fi
-            echo "  -> using fallback summary" >> "$LOG_FILE"
-        fi
 
-        # Build notification
-        SHORT_SID="${SESSION_ID:0:8}"
-        TITLE="CC Done (${ELAPSED_MINS}m) — ${PROJECT}"
-        MSG="$SUMMARY"
+            # Fallback if Haiku failed or wasn't attempted
+            if [ -z "$SUMMARY" ]; then
+                if [ -n "$LAST_ASSISTANT_TEXT" ]; then
+                    SUMMARY="${LAST_ASSISTANT_TEXT:0:280}"
+                    [ ${#LAST_ASSISTANT_TEXT} -gt 280 ] && SUMMARY="${SUMMARY}..."
+                elif [ -n "$TOOL_NAMES" ]; then
+                    SUMMARY="Used tools: $TOOL_NAMES"
+                elif [ -n "$STOP_REASON" ]; then
+                    SUMMARY="$STOP_REASON"
+                else
+                    SUMMARY="(no summary available)"
+                fi
+                echo "  -> [bg] using fallback: '${SUMMARY:0:100}'" >> "$LOG_FILE"
+            fi
 
-        # Send notification, then remove timestamp file to prevent duplicate notifications
-        # (multiple Stop events can fire against the same start time)
-        echo "  -> SENDING: title='$TITLE' body='${MSG:0:100}...' (start=$START_TIME)" >> "$LOG_FILE"
-        curl -s -u "$NTFY_USERNAME:$NTFY_PASSWORD" \
-            -d "$MSG" \
-            -H "Title: $TITLE" \
-            -H "Priority: urgent" \
-            "https://$NTFY_URL/$NTFY_TOPIC_CC" >/dev/null 2>&1
-        rm -f "$TIMESTAMP_FILE"
+            echo "  -> [bg] SENDING: title='$TITLE' body='${SUMMARY:0:100}...' (start=$START_TIME)" >> "$LOG_FILE"
+            NTFY_RESP=$(curl -s -w "\n%{http_code}" -u "$NTFY_USERNAME:$NTFY_PASSWORD" \
+                -d "$SUMMARY" \
+                -H "Title: $TITLE" \
+                -H "Priority: urgent" \
+                "https://$NTFY_URL/$NTFY_TOPIC_CC" 2>&1)
+            NTFY_EXIT=$?
+            NTFY_HTTP=$(echo "$NTFY_RESP" | tail -1)
+            NTFY_BODY=$(echo "$NTFY_RESP" | sed '$d' | head -c 200)
+            echo "  -> [bg] ntfy: exit=$NTFY_EXIT http=$NTFY_HTTP body='$NTFY_BODY'" >> "$LOG_FILE"
+            echo "  -> [bg] done $(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+        ) &
+        disown
     else
         echo "  -> below threshold, no notification" >> "$LOG_FILE"
     fi
