@@ -63,7 +63,7 @@
           },
           {
             "type": "command",
-            "command": "__HOME__/Work-Stuff/dotfiles/custom_bins/claude-vibes",
+            "command": "__DOT_DIR__/custom_bins/claude-vibes",
             "timeout": 5
           }
         ]
@@ -104,7 +104,7 @@
   "plansDirectory": ".claude/plans",
   "statusLine": {
     "type": "command",
-    "command": "__HOME__/Work-Stuff/dotfiles/custom_bins/claude-statusline"
+    "command": "__DOT_DIR__/custom_bins/claude-statusline"
   },
   "extraKnownMarketplaces": {
     "ai-safety-plugins": {

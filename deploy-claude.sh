@@ -21,7 +21,7 @@ ln -s $DOT_DIR/config/claude/output-styles $HOME/.claude/output-styles
 # Create saved_agents directory for agent lifecycle management
 mkdir -p $HOME/.claude/saved_agents
 # Generate settings.json with correct home path
-sed "s|__HOME__|$HOME|g" $DOT_DIR/config/claude/settings.json.template > $HOME/.claude/settings.json
+sed -e "s|__HOME__|$HOME|g" -e "s|__DOT_DIR__|$DOT_DIR|g" $DOT_DIR/config/claude/settings.json.template > $HOME/.claude/settings.json
 # Copy ntfy.conf if it exists (not symlinked due to credentials)
 if [ -f "$DOT_DIR/config/claude/ntfy.conf" ]; then
     cp $DOT_DIR/config/claude/ntfy.conf $HOME/.claude/ntfy.conf
