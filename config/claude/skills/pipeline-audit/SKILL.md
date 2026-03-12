@@ -79,7 +79,29 @@ After each major step, results should be saved to disk so the pipeline can resum
 - Results written only at the very end — a crash at 95% loses everything
 - No resume/restart capability for long-running jobs
 
-### 3. Pipeline inventory (Always produce)
+### 3. Silently dropped results (Critical)
+
+Pipelines that filter, skip, or discard items without accounting for them in the final output. The user should always be able to reconcile "items in" vs "items out" for every step.
+
+**Red flags:**
+- Failed items (API errors, parse failures, errored trajectories) are caught and silently skipped — they never appear in any output file
+- Filtering steps (dedup, quality thresholds) discard items with no record of what was removed or why
+- The only output is the "clean" result — no way to audit what was lost along the way
+- `continue` in a loop's `except` block with no logging or output of the failed item
+
+**What to recommend:** Pipelines with filtering, dedup, or cleaning steps should produce **two distinct output artifacts**:
+
+1. **Full/raw output** — everything. All metadata, all items including ones that errored out or were filtered, all intermediate results. This is the audit trail. A researcher should be able to look at this and understand exactly what happened, including failures and what was excluded.
+
+2. **Clean output** — the final, usable result: merged, deduplicated, filtered, and cleaned. This is what downstream consumers actually use.
+
+**Why both:** If only the clean output exists, there's no way to know what was dropped, whether the filtering was too aggressive, or whether a bug caused valid data to be discarded. The raw output is what makes the pipeline auditable.
+
+**Flag pipelines that only produce one output file** when they have filtering/cleaning steps — the user can't distinguish "item was correctly filtered" from "item was silently lost to a bug."
+
+## Output format
+
+### Section 1: Pipeline Inventory (always first)
 
 For every pipeline found, produce a summary row:
 
@@ -101,11 +123,7 @@ Bad: "fetch → parse → score → export"
 
 Good: "Step 1: Fetches all conversation transcripts from the API using paginated requests (~500 per batch). Step 2: Parses each transcript into structured turn objects, extracting speaker labels and timestamps. Step 3: Sends each turn to GPT-4 for refusal classification, collecting scores and reasoning. Step 4: Writes scored results to a CSV with one row per turn, including the original transcript ID and classification."
 
-## Output format
-
-### Section 1: Pipeline Inventory (always first)
-
-The at-a-glance table described above. This is the most important deliverable — the user should be able to scan this and immediately see which pipelines are robust and which aren't.
+This is the most important deliverable — the user should be able to scan this and immediately see which pipelines are robust and which aren't.
 
 ### Section 2: Findings (grouped by pipeline)
 
@@ -142,8 +160,8 @@ For each finding, in original numbering order:
 #: [number]
 Finding: [one-line description from the original report]
 Context: [one sentence — which pipeline, what part of it]
-What you said: "[direct quote of user's response]"
-What I did: [action taken — fix description, investigation result, etc.]
+User response: "[direct quote of what the user said]"
+Action taken: [fix description, investigation result, etc.]
 Ambiguity?: [contradictions or edge cases in user's instructions, or "None"]
 Status: ✅ Done | ⏭️ Skipped | ❌ Reverted | 🔍 Investigating | 🔶 Partial | etc.
 ```
