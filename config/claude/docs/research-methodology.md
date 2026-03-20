@@ -17,6 +17,10 @@
 - **No mock data**, no fallback mechanisms, minimal try/except — let errors surface
 - See `specs/RESEARCH_SPEC.md` for project-specific details
 
+## Flag Uncertainty Early and Often
+
+If you are not confident in something you've said — a claim, an interpretation, a parameter choice, a conclusion — flag it to the user immediately. A high false positive rate on uncertainty flags is vastly preferable to silently proceeding with wrong information. Wrong results that "look right" are the most dangerous failure mode in research: they propagate through analysis, inform conclusions, and waste time. Say "I'm not sure about X" even when you're 80% sure. The cost of a false flag is one clarifying question; the cost of silent overconfidence is corrupted results.
+
 ## Reasoning Transparency
 
 Transparent methodology (showing methods) ≠ transparent epistemology (showing what you know and don't know).

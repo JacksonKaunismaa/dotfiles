@@ -6,7 +6,7 @@ Global guidance for Claude Code across all repositories.
 
 **Use `uv` for package management. Virtual environment is at `.venv`.**
 
-Claude config (`~/.claude/`) is symlinked to `~/Work-Stuff/dotfiles/config/claude/`.
+Claude config (`~/.claude/`) is a regular directory. `deploy-claude.sh` symlinks specific subdirectories (rules, skills, hooks, docs, templates, etc.) from `~/Work-Stuff/dotfiles/config/claude/` into it. See `docs/plugin-and-skill-management.md` for the full layout.
 
 ## Default Behaviors
 
@@ -15,7 +15,7 @@ Claude config (`~/.claude/`) is symlinked to `~/Work-Stuff/dotfiles/config/claud
 - **Use existing code** for experiments — correct hyperparams, full data, validated metrics; ad-hoc only for dry runs
 - **Delegate to agents** for non-trivial work — use agent teams for parallelizable tasks, subagents for focused single-output tasks
 - **Commit frequently** after every meaningful change
-- **Update docs when changing code** — keep CLAUDE.md, README.md, project docs in sync
+- **Update docs when changing code** — keep CLAUDE.md, README.md, and tracked project docs in sync (respect `.gitignore` — if `docs/` is ignored, don't try to commit it)
 - **Flag outdated docs** — proactively ask about updates when you notice inconsistencies
 - **Run tool calls in parallel** when independent
 - **One editor per file** — never multiple agents editing same file concurrently
@@ -79,8 +79,8 @@ Global = applies to ALL projects. Per-project = repo-specific, version-controlle
 
 Reference material loaded by skills when relevant, NOT always in context:
 
-- `docs/research-methodology.md` — Research workflow, experiment running, file organization
-- `docs/async-and-performance.md` — Async patterns, batch APIs, caching, memory management
+- `docs/research-methodology.md` — **Always read before planning or running experiments.** Research workflow, uncertainty flagging, experiment running, file organization
+- `docs/async-and-performance.md` — **Read before writing any LLM pipeline** (evals, judging, scoring, classification, data gen). Async patterns, batch APIs, caching, memory management
 - `docs/ci-standards.md` — Confidence intervals, paired comparisons, power analysis, statistical reporting
 - `docs/agent-teams-guide.md` — Team composition, communication, known limitations
 - `docs/documentation-lookup.md` — Context7, GitHub CLI, verified repos, decision tree
