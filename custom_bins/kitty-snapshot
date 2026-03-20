@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""Snapshot kitty terminal state for crash recovery.
+
+Captures all OS windows, tabs, panes, working directories, and maps
+Claude Code processes to their session UUIDs for automatic resumption.
+
+Run via systemd timer (kitty-snapshot.timer) every 30 seconds.
+"""
+
+import json
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+
+SNAPSHOT_DIR = Path.home() / ".local" / "share" / "kitty-sessions"
+SNAPSHOT_FILE = SNAPSHOT_DIR / "snapshot.json"
+CLAUDE_DIR = Path.home() / ".claude"
+# With dedup, slots only rotate on structural changes (new tab, session
+# start/stop). 100 slots at ~10KB each = ~1MB max. Should cover days.
+MAX_SNAPSHOTS = 100
+
+
+# ---------------------------------------------------------------------------
+# Kitty remote control
+# ---------------------------------------------------------------------------
+
+
+def find_kitty_sockets():
+    """Find all kitty remote control sockets in /tmp."""
+    return [p for p in Path("/tmp").glob("kitty-*") if p.is_socket()]
+
+
+def get_kitty_state(socket_path):
+    """Query a single kitty instance for its full window/tab state."""
+    try:
+        result = subprocess.run(
+            ["kitten", "@", "--to", f"unix:{socket_path}", "ls"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Hyprland workspace detection
+# ---------------------------------------------------------------------------
+
+
+def get_hyprland_clients():
+    """Get all Hyprland window clients with workspace info.
+
+    Returns list of {pid, workspace_id, title} dicts.
+    Multiple OS windows from the same kitty instance share a PID but
+    have different Hyprland clients (each with its own workspace + title).
+    """
+    try:
+        result = subprocess.run(
+            ["hyprctl", "clients", "-j"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        clients = json.loads(result.stdout)
+        return [
+            {
+                "pid": c.get("pid"),
+                "workspace_id": c.get("workspace", {}).get("id"),
+                "title": c.get("title", ""),
+            }
+            for c in clients
+            if c.get("class", "").lower() == "kitty"
+        ]
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return []
+
+
+def match_workspace(kitty_pid, active_tab_title, hypr_clients):
+    """Find the workspace for a kitty OS window.
+
+    Matches by kitty instance PID, then disambiguates by title if
+    multiple OS windows share the PID.
+    """
+    by_pid = [c for c in hypr_clients if c["pid"] == kitty_pid]
+    if not by_pid:
+        return None
+    if len(by_pid) == 1:
+        return by_pid[0]["workspace_id"]
+    # Multiple OS windows — match by active tab title
+    for c in by_pid:
+        if c["title"] and active_tab_title and c["title"] in active_tab_title:
+            return c["workspace_id"]
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Claude Code session identification
+# ---------------------------------------------------------------------------
+
+
+UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+
+def get_session_uuid(foreground_procs):
+    """Get CC session UUID for a kitty window.
+
+    Reads from /tmp/claude-session-<CR_PID>, maintained by the
+    write-session-id.sh hook. The hook fires on every SessionStart
+    (including /resume, /clear) and UserPromptSubmit, so it always
+    has the current session ID — even after mid-session /resume.
+
+    Do NOT read from process cmdline: after /resume mid-session,
+    cmdline still shows the original UUID, which is stale.
+    """
+    procs = foreground_procs or []
+
+    # Find cr wrapper PID
+    cr_pid = None
+    for proc in procs:
+        cmdline = proc.get("cmdline", [])
+        if cmdline and cmdline[0].endswith("/bash") and any("/cr" in a for a in cmdline):
+            cr_pid = proc.get("pid")
+            break
+
+    if cr_pid:
+        try:
+            content = Path(f"/tmp/claude-session-{cr_pid}").read_text().strip()
+            if UUID_RE.fullmatch(content):
+                return content, "identified"
+        except (OSError, FileNotFoundError):
+            pass
+
+    return None, "unidentified"
+
+
+# ---------------------------------------------------------------------------
+# Snapshot logic
+# ---------------------------------------------------------------------------
+
+
+def is_claude_process(cmdline):
+    if not cmdline:
+        return False
+    return os.path.basename(cmdline[0]) == "claude"
+
+
+def is_just_shell(cmdline):
+    if not cmdline:
+        return True
+    return os.path.basename(cmdline[0]) in ("fish", "bash", "zsh", "sh")
+
+
+def build_snapshot():
+    """Capture the full kitty state and enrich with CC session info."""
+    sockets = find_kitty_sockets()
+    if not sockets:
+        return None
+
+    hypr_clients = get_hyprland_clients()
+
+    all_os_windows = []
+
+    for socket in sockets:
+        state = get_kitty_state(socket)
+        if not state:
+            continue
+
+        # Extract kitty instance PID from socket name (/tmp/kitty-{PID})
+        try:
+            kitty_pid = int(socket.name.split("-", 1)[1])
+        except (ValueError, IndexError):
+            kitty_pid = None
+
+        for os_window in state:
+            # Find workspace via active tab title
+            active_tab_title = ""
+            for tab in os_window.get("tabs", []):
+                if tab.get("is_active"):
+                    active_tab_title = tab.get("title", "")
+                    break
+
+            workspace = None
+            if kitty_pid:
+                workspace = match_workspace(
+                    kitty_pid, active_tab_title, hypr_clients
+                )
+
+            os_win_data = {
+                "platform_window_id": os_window.get("platform_window_id"),
+                "is_focused": os_window.get("is_focused", False),
+                "workspace": workspace,
+                "tabs": [],
+            }
+
+            for tab in os_window.get("tabs", []):
+                tab_data = {
+                    "title": tab.get("title", ""),
+                    "is_active": tab.get("is_active", False),
+                    "layout": tab.get("layout", "stack"),
+                    "windows": [],
+                }
+
+                for window in tab.get("windows", []):
+                    fg_procs = window.get("foreground_processes", [])
+                    cwd = window.get("cwd", "")
+
+                    fg = fg_procs[-1] if fg_procs else {}
+                    win_data = {
+                        "cwd": cwd,
+                        "title": window.get("title", ""),
+                        "is_focused": window.get("is_focused", False),
+                        "foreground_cmdline": fg.get("cmdline", []),
+                        "foreground_pid": fg.get("pid"),
+                        "is_claude": False,
+                        "claude_session_uuid": None,
+                        "claude_session_source": None,
+                    }
+
+                    # Check ALL foreground processes for claude
+                    for proc in fg_procs:
+                        if is_claude_process(proc.get("cmdline", [])):
+                            win_data["is_claude"] = True
+                            break
+
+                    # Extract session UUID from --resume arg in ANY
+                    # foreground process (claude binary or cr wrapper)
+                    if win_data["is_claude"]:
+                        uuid, source = get_session_uuid(
+                            fg_procs
+                        )
+                        win_data["claude_session_uuid"] = uuid
+                        win_data["claude_session_source"] = source
+
+                    tab_data["windows"].append(win_data)
+                os_win_data["tabs"].append(tab_data)
+            all_os_windows.append(os_win_data)
+
+    if not all_os_windows:
+        return None
+
+    return {
+        "timestamp": time.time(),
+        "timestamp_human": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "os_windows": all_os_windows,
+    }
+
+
+def rotate_snapshots():
+    """Keep the last MAX_SNAPSHOTS snapshots for crash resilience."""
+    for i in range(MAX_SNAPSHOTS - 1, 0, -1):
+        src = (
+            SNAPSHOT_DIR / f"snapshot.{i - 1}.json" if i > 1 else SNAPSHOT_FILE
+        )
+        dst = SNAPSHOT_DIR / f"snapshot.{i}.json"
+        if src.exists():
+            src.rename(dst)
+
+
+def snapshot_fingerprint(data):
+    """Content fingerprint for dedup — structural content only.
+
+    Excludes volatile fields (is_active, is_focused, foreground_pid, title)
+    that change constantly without meaningful state changes.
+    """
+    stable = []
+    for osw in data["os_windows"]:
+        tabs = []
+        for tab in osw.get("tabs", []):
+            windows = []
+            for win in tab.get("windows", []):
+                windows.append({
+                    "cwd": win.get("cwd"),
+                    "is_claude": win.get("is_claude"),
+                    "claude_session_uuid": win.get("claude_session_uuid"),
+                    "foreground_cmdline": win.get("foreground_cmdline"),
+                })
+            tabs.append({"windows": windows, "layout": tab.get("layout")})
+        stable.append({"tabs": tabs, "workspace": osw.get("workspace")})
+    return json.dumps(stable, sort_keys=True)
+
+
+def main():
+    data = build_snapshot()
+    if data is None:
+        return
+
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Dedup: if nothing changed since last snapshot, just update timestamp
+    if SNAPSHOT_FILE.exists():
+        try:
+            with open(SNAPSHOT_FILE) as f:
+                old = json.load(f)
+            if snapshot_fingerprint(old) == snapshot_fingerprint(data):
+                # Same state — update timestamp in place, no rotation
+                old["timestamp"] = data["timestamp"]
+                old["timestamp_human"] = data["timestamp_human"]
+                tmp = SNAPSHOT_FILE.with_suffix(".tmp")
+                with open(tmp, "w") as f:
+                    json.dump(old, f, indent=2)
+                tmp.rename(SNAPSHOT_FILE)
+                return
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass
+
+    # State changed — rotate and write new snapshot
+    rotate_snapshots()
+    tmp = SNAPSHOT_FILE.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    tmp.rename(SNAPSHOT_FILE)
+
+
+if __name__ == "__main__":
+    main()

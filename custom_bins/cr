@@ -1,0 +1,97 @@
+#!/bin/bash
+# cr - Claude Code with restart support and auto git-root cd
+#
+# Session ID ownership:
+#   - Hook (write-session-id.sh) is the SOLE writer of /tmp/claude-session-<pid>
+#   - Hook reads session_id from stdin JSON — always correct, even after /resume
+#   - cr only READS the session file on reload
+#
+# Three modes:
+#   1. Fresh: generates UUID, passes --session-id (hook confirms on SessionStart)
+#   2. Known resume: passes --resume <uuid> (hook confirms on SessionStart)
+#   3. Discovery: passes --resume/--continue as-is (hook writes ID on SessionStart)
+
+CLAUDE_BIN="$(command -v claude)"
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+cleanup() { rm -f "/tmp/claude-session-$$"; }
+trap cleanup EXIT
+
+# Auto-cd to git root if inside a git repo
+git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -n "$git_root" && "$PWD" != "$git_root" ]]; then
+    printf '\033[90mcd %s\033[0m\n' "$git_root"
+    cd "$git_root" || true
+fi
+
+export CR_PID=$$
+SESSION_FILE="/tmp/claude-session-$$"
+
+# Parse args: separate session-selection flags from everything else
+base_flags=()
+session_flags=()
+skip_next=false
+
+for ((i=1; i<=$#; i++)); do
+    arg="${!i}"
+    if $skip_next; then skip_next=false; continue; fi
+    case "$arg" in
+        --resume|-r)
+            next=$((i+1))
+            next_val="${!next}"
+            if [[ -n "$next_val" && "$next_val" =~ $UUID_RE ]]; then
+                # --resume <uuid>: known ID
+                session_flags=("--resume" "$next_val")
+                skip_next=true
+            elif [[ -n "$next_val" && "$next_val" != -* ]]; then
+                # --resume <search-term>: discovery
+                session_flags=("--resume" "$next_val")
+                skip_next=true
+            else
+                # --resume (no value): picker, discovery
+                session_flags=("--resume")
+            fi
+            ;;
+        --continue|-c)
+            session_flags=("-c")
+            ;;
+        --session-id)
+            next=$((i+1))
+            session_flags=("--session-id" "${!next}")
+            skip_next=true
+            ;;
+        *)
+            base_flags+=("$arg")
+            ;;
+    esac
+done
+
+# Default: fresh session with generated UUID
+if [[ ${#session_flags[@]} -eq 0 ]]; then
+    session_flags=("--session-id" "$(uuidgen)")
+fi
+
+args=("${base_flags[@]}" "${session_flags[@]}")
+
+while true; do
+    "$CLAUDE_BIN" "${args[@]}"
+    rc=$?
+
+    if [[ $rc -eq 129 ]]; then
+        printf '\n\033[1;36m↻ Restarting...\033[0m\n\n'
+        sleep 0.3
+
+        # Read session ID from hook-maintained file
+        if [[ -f "$SESSION_FILE" ]]; then
+            session_id=$(cat "$SESSION_FILE")
+            args=("${base_flags[@]}" "--resume" "$session_id")
+        else
+            echo "Warning: no session file at $SESSION_FILE" >&2
+            args=("${base_flags[@]}" "-c")
+        fi
+    else
+        break
+    fi
+done
+
+# cleanup handled by EXIT trap

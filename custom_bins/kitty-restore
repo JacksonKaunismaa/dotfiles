@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""Restore kitty terminal sessions from a snapshot.
+
+Reads the latest snapshot (or a specified one), shows a summary of what
+will be restored, and launches kitty with the saved layout. Claude Code
+sessions are resumed through the `cr` wrapper if available, preserving
+--dangerously-skip-permissions and the restart-on-reload loop.
+
+Usage:
+    kitty-restore              # browse snapshots, pick one, pick windows, launch
+    kitty-restore <path>       # restore from a specific snapshot file
+    kitty-restore --show       # just show the snapshot summary, don't restore
+    kitty-restore --session    # generate session file only, don't launch
+"""
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+SNAPSHOT_DIR = Path.home() / ".local" / "share" / "kitty-sessions"
+SNAPSHOT_FILE = SNAPSHOT_DIR / "snapshot.json"
+CR_WRAPPER = Path.home() / ".local" / "bin" / "cr"
+
+
+def claude_launch_cmd(resume_arg=None):
+    """Build the command to launch Claude Code, using cr wrapper if available.
+
+    The cr wrapper provides:
+      - auto-cd to git root
+      - restart-on-reload loop (/reload support)
+      - session resume handling
+
+    The alias `cld` also strips KITTY_WINDOW_ID, so we replicate that.
+    """
+    if CR_WRAPPER.exists() and os.access(CR_WRAPPER, os.X_OK):
+        parts = ["env", "-u", "KITTY_WINDOW_ID", str(CR_WRAPPER), "--dangerously-skip-permissions"]
+    else:
+        parts = ["claude"]
+
+    if resume_arg:
+        parts.extend(["--resume", resume_arg])
+    else:
+        parts.append("--resume")
+
+    return " ".join(parts)
+
+
+def count_claude_sessions(data):
+    return sum(
+        1
+        for osw in data.get("os_windows", [])
+        for tab in osw.get("tabs", [])
+        for win in tab.get("windows", [])
+        if win.get("claude_session_uuid")
+    )
+
+
+def list_snapshots():
+    """List all available snapshots and return the selected data directly.
+
+    Loads all snapshot data into memory at display time so the timer
+    can't desync what's shown from what's selected.
+    """
+    # Load all snapshots into memory immediately
+    entries = []  # [(label, data)]
+    for path_label, path in [("latest", SNAPSHOT_FILE)] + [
+        (f"{i} back", SNAPSHOT_DIR / f"snapshot.{i}.json")
+        for i in range(1, 100)
+    ]:
+        if not path.exists():
+            if path_label != "latest":
+                break
+            continue
+        try:
+            with open(path) as f:
+                entries.append((path_label, json.load(f)))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    if not entries:
+        print("No snapshots found.")
+        return None
+
+    now = datetime.now()
+    # Display oldest first, newest last (closest to the prompt)
+    print("Available snapshots:\n")
+    for idx in reversed(range(len(entries))):
+        label, data = entries[idx]
+        try:
+            ts = datetime.fromtimestamp(data["timestamp"])
+            age = now - ts
+            if age.total_seconds() < 3600:
+                age_str = f"{age.total_seconds() / 60:.0f}m ago"
+            else:
+                age_str = f"{age.total_seconds() / 3600:.1f}h ago"
+
+            n_cc = count_claude_sessions(data)
+            n_win = len(data["os_windows"])
+            n_tabs = sum(len(osw["tabs"]) for osw in data["os_windows"])
+            num = idx + 1
+            latest_tag = " (latest)" if idx == 0 else ""
+            print(f"  [{num}] {age_str}{latest_tag} — {n_win} windows, {n_tabs} tabs, {n_cc} CC")
+
+            for osw in data["os_windows"]:
+                ws = osw.get("workspace")
+                ws_tag = f"ws{ws}" if ws else "ws?"
+                tab_parts = []
+                for tab in osw.get("tabs", []):
+                    for win in tab.get("windows", []):
+                        cwd = win.get("cwd", "")
+                        short = os.path.basename(cwd) or cwd
+                        if win.get("is_claude"):
+                            uuid = win.get("claude_session_uuid")
+                            tab_parts.append(f"cc:{short}" if uuid else f"cc:{short}?")
+                        elif not is_just_shell(win.get("foreground_cmdline", [])):
+                            cmd = os.path.basename(win["foreground_cmdline"][0])
+                            tab_parts.append(f"{cmd}:{short}")
+                        else:
+                            tab_parts.append(short)
+                print(f"      {ws_tag}: {', '.join(tab_parts)}")
+            print()
+        except KeyError:
+            print(f"  [{idx + 1}] (corrupt)\n")
+
+    print()
+    choice = input("Select snapshot (Enter for latest): ").strip()
+    if not choice:
+        return entries[0][1]
+    try:
+        return entries[int(choice) - 1][1]
+    except (ValueError, IndexError):
+        print("Invalid selection.")
+        return None
+
+
+def load_snapshot(path=None):
+    path = Path(path) if path else SNAPSHOT_FILE
+    if not path.exists():
+        # Try older snapshots
+        for i in range(1, 100):
+            alt = SNAPSHOT_DIR / f"snapshot.{i}.json"
+            if alt.exists():
+                print(f"Latest snapshot missing, using snapshot.{i}.json")
+                path = alt
+                break
+        else:
+            print(f"No snapshot found at {path}")
+            sys.exit(1)
+    with open(path) as f:
+        return json.load(f)
+
+
+def is_just_shell(cmdline):
+    if not cmdline:
+        return True
+    return os.path.basename(cmdline[0]) in ("fish", "bash", "zsh", "sh")
+
+
+def print_summary(data):
+    ts = datetime.fromtimestamp(data["timestamp"])
+    age_min = (datetime.now() - ts).total_seconds() / 60
+    print(f"Snapshot: {data['timestamp_human']} ({age_min:.0f} min ago)")
+    print()
+
+    total_tabs = 0
+    total_claude = 0
+    total_claude_identified = 0
+
+    for os_idx, os_window in enumerate(data["os_windows"]):
+        focused = " (focused)" if os_window.get("is_focused") else ""
+        ws = os_window.get("workspace")
+        ws_str = f" [workspace {ws}]" if ws else ""
+        print(f"Window {os_idx + 1}{focused}{ws_str}:")
+
+        for tab in os_window["tabs"]:
+            total_tabs += 1
+            active = " *" if tab.get("is_active") else ""
+            title = tab.get("title") or "untitled"
+
+            for window in tab["windows"]:
+                cwd = window["cwd"]
+                short_cwd = cwd.replace(str(Path.home()), "~")
+
+                if window["is_claude"]:
+                    total_claude += 1
+                    uuid = window.get("claude_session_uuid")
+                    source = window.get("claude_session_source", "")
+                    if uuid:
+                        total_claude_identified += 1
+                        uuid_short = uuid[:8]
+                        src_tag = f" [{source}]" if source else ""
+                        print(
+                            f"  {title}{active}: claude ({uuid_short}...{src_tag}) @ {short_cwd}"
+                        )
+                    else:
+                        print(
+                            f"  {title}{active}: claude (session unknown — will use picker) @ {short_cwd}"
+                        )
+                else:
+                    cmdline = window.get("foreground_cmdline", [])
+                    if cmdline and not is_just_shell(cmdline):
+                        cmd = " ".join(cmdline)
+                        if len(cmd) > 50:
+                            cmd = cmd[:47] + "..."
+                        print(f"  {title}{active}: {cmd} @ {short_cwd}")
+                    else:
+                        print(f"  {title}{active}: shell @ {short_cwd}")
+
+        print()
+
+    print(
+        f"Total: {total_tabs} tabs, {total_claude} Claude sessions "
+        f"({total_claude_identified} identified by UUID)"
+    )
+
+
+def dedup_windows(os_windows):
+    """Remove duplicate CC tabs that share the same session UUID.
+
+    Duplicates accumulate when a restore creates N tabs for the same
+    session, the next snapshot captures all N, and the next restore
+    repeats them. Keep only the first occurrence of each UUID.
+    Non-claude tabs and tabs with unknown UUIDs are always kept.
+    """
+    seen_uuids = set()
+    deduped = []
+    for osw in os_windows:
+        new_tabs = []
+        for tab in osw.get("tabs", []):
+            keep = True
+            for win in tab.get("windows", []):
+                uuid = win.get("claude_session_uuid")
+                if uuid:
+                    if uuid in seen_uuids:
+                        keep = False
+                    else:
+                        seen_uuids.add(uuid)
+            if keep:
+                new_tabs.append(tab)
+        if new_tabs:
+            deduped.append({**osw, "tabs": new_tabs})
+    return deduped
+
+
+def generate_session_file(os_windows):
+    """Generate a kitty session file that recreates all OS windows and tabs."""
+    lines = []
+
+    for os_idx, os_window in enumerate(os_windows):
+        if os_idx > 0:
+            lines.append("")
+            lines.append("new_os_window")
+
+        for tab_idx, tab in enumerate(os_window["tabs"]):
+            # Sanitize title — newlines break session file format
+            title = tab.get("title", "").replace("\n", " ").replace("\r", " ")
+
+            if tab_idx == 0:
+                # First tab is implicit, set its title via `title`
+                if title:
+                    lines.append(f"title {title}")
+            else:
+                lines.append("")
+                lines.append(f"new_tab {title}")
+
+            layout = tab.get("layout")
+            if layout:
+                lines.append(f"layout {layout}")
+
+            for win_idx, window in enumerate(tab["windows"]):
+                cwd = window["cwd"]
+
+                # Fall back to home if dir no longer exists
+                if not os.path.isdir(cwd):
+                    cwd = str(Path.home())
+
+                lines.append(f"cd {cwd}")
+
+                if window["is_claude"] and window.get("claude_session_uuid"):
+                    uuid = window["claude_session_uuid"]
+                    cmd = claude_launch_cmd(resume_arg=uuid)
+                    # Use -C (init-command) so fish starts interactively
+                    # with full theming/shell integration, then runs cmd.
+                    # When cmd exits, fish shows its normal prompt.
+                    lines.append(
+                        f'launch fish -C "{cmd}"'
+                    )
+                elif window["is_claude"]:
+                    cmd = claude_launch_cmd()
+                    lines.append(
+                        f'launch fish -C "{cmd}"'
+                    )
+                else:
+                    cmdline = window.get("foreground_cmdline", [])
+                    if cmdline and not is_just_shell(cmdline):
+                        # Show a prominent reminder of what was running.
+                        # NO_AUTO_LS suppresses the fish auto-ls that
+                        # would otherwise bury this message.
+                        # Sanitize: collapse newlines/tabs (multiline
+                        # commands like kitten ask break session files),
+                        # escape quotes, and truncate.
+                        cmd_str = " ".join(cmdline)
+                        cmd_str = cmd_str.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+                        # Collapse multiple spaces
+                        while "  " in cmd_str:
+                            cmd_str = cmd_str.replace("  ", " ")
+                        # Truncate very long commands
+                        if len(cmd_str) > 200:
+                            cmd_str = cmd_str[:197] + "..."
+                        safe = (
+                            cmd_str.replace("\\", "\\\\")
+                            .replace("'", "\\'")
+                            .replace('"', '\\"')
+                        )
+                        reminder = (
+                            "set -g NO_AUTO_LS 1; "
+                            "echo; "
+                            "set_color -o brmagenta; "
+                            "echo 'Previously running (not restored):'; "
+                            "set_color brwhite; "
+                            f"echo '  {safe}'; "
+                            "set_color normal; "
+                            "echo"
+                        )
+                        lines.append(f'launch fish -C "{reminder}"')
+                    else:
+                        lines.append("launch")
+
+    return "\n".join(lines) + "\n"
+
+
+def main():
+    args = sys.argv[1:]
+
+    show_only = "--show" in args
+    session_only = "--session" in args
+    path_args = [a for a in args if not a.startswith("--")]
+    snapshot_path = path_args[0] if path_args else None
+
+    # Main loop: pick snapshot → review → pick windows (with back navigation)
+    data = None
+    while True:
+        if not snapshot_path and data is None:
+            result = list_snapshots()
+            if result is None:
+                return
+            if isinstance(result, dict):
+                # list_snapshots returns data directly (loaded into memory)
+                data = result
+            else:
+                data = load_snapshot(result)
+        elif snapshot_path and data is None:
+            data = load_snapshot(snapshot_path)
+        # Dedup before showing summary so user sees the clean state
+        display_data = {**data, "os_windows": dedup_windows(data["os_windows"])}
+        print_summary(display_data)
+
+        if show_only:
+            return
+
+        n_windows = len(display_data["os_windows"])
+        if n_windows == 0:
+            print("Nothing to restore.")
+            return
+
+        # Let user pick which windows to restore
+        if n_windows == 1:
+            response = input("\nRestore? [y/N/b=back] ").strip().lower()
+            if response == "b":
+                snapshot_path = None
+                data = None
+                print()
+                continue
+            if response != "y":
+                print("Aborted.")
+                return
+            selected = display_data["os_windows"]
+        else:
+            print(f"\nWhich windows? (1-{n_windows}, comma-separated, 'all', or 'b' to go back)")
+            response = input("> ").strip().lower()
+            if response == "b":
+                snapshot_path = None
+                data = None
+                print()
+                continue
+            if not response or response == "n":
+                print("Aborted.")
+                return
+            if response == "all" or response == "y":
+                selected = display_data["os_windows"]
+            else:
+                try:
+                    indices = [int(x.strip()) - 1 for x in response.split(",")]
+                    selected = [display_data["os_windows"][i] for i in indices]
+                except (ValueError, IndexError):
+                    print("Invalid selection.")
+                    return
+
+        break
+
+    # Deduplicate CC sessions that appear in multiple tabs
+    selected = dedup_windows(selected)
+
+    # Generate one session file per OS window so we can place each
+    # on its original Hyprland workspace independently.
+    session_files = []
+    for i, osw in enumerate(selected):
+        content = generate_session_file([osw])
+        path = SNAPSHOT_DIR / f"restore-{i}.kitty-session"
+        with open(path, "w") as f:
+            f.write(content)
+        session_files.append((path, osw.get("workspace")))
+
+    if session_only:
+        for path, ws in session_files:
+            ws_str = f" (workspace {ws})" if ws else ""
+            print(f"  kitty --session {path}{ws_str}")
+        return
+
+    import time as _time
+
+    for i, (path, ws) in enumerate(session_files):
+        ws_str = f" → workspace {ws}" if ws else ""
+        print(f"Launching window {i + 1}{ws_str}...")
+        proc = subprocess.Popen(["kitty", "--session", str(path)])
+
+        if ws:
+            # Poll for the kitty window to appear in Hyprland, then move it
+            for _ in range(20):  # up to 2 seconds
+                _time.sleep(0.1)
+                result = subprocess.run(
+                    ["hyprctl", "clients", "-j"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0:
+                    import json as _json
+                    clients = _json.loads(result.stdout)
+                    if any(c.get("pid") == proc.pid for c in clients):
+                        subprocess.run(
+                            [
+                                "hyprctl", "dispatch", "movetoworkspacesilent",
+                                f"{ws},pid:{proc.pid}",
+                            ],
+                            capture_output=True,
+                            timeout=5,
+                        )
+                        break
+
+    print("Done!")
+
+
+if __name__ == "__main__":
+    main()

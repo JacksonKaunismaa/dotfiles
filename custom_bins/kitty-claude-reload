@@ -1,0 +1,33 @@
+#!/bin/bash
+# kitty-claude-reload - Reload Claude Code from a kitty keybind
+# Works even when CC is frozen (signals from outside the process).
+#
+# Kitty keybind: map ctrl+shift+r launch --type=background kitty-claude-reload
+#
+# cr owns the session UUID in /tmp/claude-session-<cr_pid> and reads it
+# on restart. All we need to do is signal SIGHUP.
+
+set -euo pipefail
+
+# Get focused window's foreground processes (the actually focused pane,
+# not just the first pane in the first tab)
+focused_procs=$(kitty @ ls --match=state:focused 2>/dev/null | jq -r '
+  [.[].tabs[].windows[] | select(.is_focused)][0].foreground_processes
+' 2>/dev/null) || exit 1
+
+# Find cr's PID
+cr_pid=$(echo "$focused_procs" | jq -r '
+  .[] | select(.cmdline | any(endswith("/cr"))) | .pid
+' 2>/dev/null)
+
+if [[ -z "$cr_pid" ]]; then
+    notify-send -u critical "Claude reload" "No cr process found in focused window"
+    exit 1
+fi
+
+if [[ ! -f "/tmp/claude-session-$cr_pid" ]]; then
+    notify-send -u normal "Claude reload" "No session file — will use --continue"
+fi
+
+# SIGHUP to claude (direct child of cr)
+pkill -HUP -P "$cr_pid" . || true

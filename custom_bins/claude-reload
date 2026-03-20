@@ -1,0 +1,9 @@
+#!/bin/bash
+# Called by /reload command. Signals cr wrapper to restart.
+# Session ID is already in /tmp/claude-session-$CR_PID (written by cr).
+if [[ -z "$CR_PID" ]]; then
+    echo "Not running inside cr wrapper" >&2
+    exit 1
+fi
+
+pkill -HUP -P "$CR_PID" .
