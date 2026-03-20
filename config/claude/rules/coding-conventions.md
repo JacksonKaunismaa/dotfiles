@@ -9,8 +9,8 @@
 - **No inline Python commands**: Never run complex Python via `python -c "..."` in Bash. Write to a file, then execute. Scratch scripts go in `./scratch/` or `/tmp/`.
 - **CSV files**: Always use pandas (`pd.read_csv()`), never `csv.DictReader`
 - **Prompts**: Always use Jinja templates, never inline Python strings. Even short prompts.
-- **Model inference**: Always use Inspect or Safety Tooling for model calls, never raw OpenAI/Anthropic clients. Safety Tooling is a research library for unified LLM inference. See `~/.claude/docs/safety-tooling.md`.
-- **Concurrent API calls**: Never serial in a loop. Use `asyncio.gather()` for independent API calls.
+- **Model inference**: Always use Inspect or Safety Tooling for model calls, never raw OpenAI/Anthropic clients. Safety Tooling is a research library for unified LLM inference that handles concurrency and rate limiting automatically — you don't need to manage semaphores or retry logic yourself. See `~/.claude/docs/safety-tooling.md`.
+- **Concurrent API calls**: Never serial in a loop. Use `asyncio.gather()` for independent API calls. **For any pipeline with multiple LLM calls** (judging, scoring, classification, data generation, eval pipelines) — read `~/.claude/docs/async-and-performance.md` before writing the concurrency layer.
 - **GitHub operations**: Always use `gh` CLI for PRs, issues, and GitHub API queries
 - **Glob patterns are case-sensitive**: Try alternative cases when searching (`**/Config.py` → also `**/config.py`)
 - **Read .eval files** using Inspect AI's `read_eval_log()` (look up via MCP server)
@@ -19,24 +19,6 @@
   from dotenv import load_dotenv
   load_dotenv()  # Call before os.getenv() or API client init
   ```
-
-### sys.path.insert (Safe Pattern)
-
-```python
-# src/utils/paths.py
-import sys
-from pathlib import Path
-
-def add_project_root():
-    project_root = Path(__file__).resolve().parent.parent.parent
-    if project_root not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-# In scripts (only in __main__ block):
-if __name__ == "__main__":
-    from src.utils.paths import add_project_root
-    add_project_root()
-```
 
 ## TypeScript
 

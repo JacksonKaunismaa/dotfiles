@@ -169,6 +169,7 @@ alias ldu 'ls -la --total-size --sort=size'     # recursive size, sorted
 #-------------------------------------------------------------
 alias fx "$HOME/go/bin/fx"
 alias cc "claude-context"
+alias chist "claude-history -i -L"
 
 alias sv "source .venv/bin/activate"
 alias de "deactivate"

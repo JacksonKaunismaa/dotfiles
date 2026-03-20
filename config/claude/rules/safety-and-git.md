@@ -12,6 +12,8 @@
 | **NEVER run `git checkout --`** or any destructive Git (e.g. `git reset --hard`, `git clean -fd`): ALWAYS prefer safe, reversible alternatives, and ask the user if best practice is to do so | Can trigger catastrophic, irreversible data loss |
 | **NEVER use `sys.path.insert`** directly | Crashes Claude Code session (see `rules/coding-conventions.md` for safe pattern) |
 | **NEVER rewrite full file during race conditions** | If Edit fails with "file modified since read", pause and wait (exponential backoff), then ask user—NEVER use Write to overwrite entire file as workaround |
+| **NEVER force-add gitignored files** (`git add -f`) | Files are gitignored for a reason (secrets, build artifacts, local config). If `git add` skips a file, check `.gitignore` — don't bypass it with `-f`. Common case: `docs/` is often gitignored in workbench/local repos. |
+| **NEVER run `git filter-repo` without a `cp -a` backup first** | `filter-repo` permanently destroys git objects with NO recovery path — reflog cleared, stash rewritten, repack garbage-collects everything. One wrong flag (e.g. `--path X` = "delete everything except X") nukes the entire repo instantly. Always `cp -a repo/ repo-backup/`, verify the backup builds, then test on the COPY first. |
 
 ## Dirty State Before Major Changes
 

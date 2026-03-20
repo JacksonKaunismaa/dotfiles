@@ -177,6 +177,7 @@ chx () {
 #-------------------------------------------------------------
 alias fx='$HOME/go/bin/fx'
 alias cc="claude-context"
+alias cld='env -u KITTY_WINDOW_ID $HOME/.local/bin/cr --dangerously-skip-permissions'
 
 alias sv="source .venv/bin/activate"
 alias de="deactivate"

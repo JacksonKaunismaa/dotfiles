@@ -83,6 +83,11 @@ For work taking >30 minutes:
 
 **Skip when**: Single-file change, code already read this session, or user says "just do it"
 
+## Pipeline Requirements
+
+- **High-frequency progress logging** — log every unit of work (step, batch, item) as it completes, with key state. Without it, you have to wait for the run to finish to find out if it's even working — that kills iteration speed. High-frequency logs let you: confirm the code is doing the right thing mid-run, get status updates and ETAs, and debug issues without re-running.
+- **Save intermediate results to disk** — if a pipeline crashes at step N, steps 1–(N-1) should be recoverable. Resume from last checkpoint, don't restart.
+
 ## Output Strategy (CRITICAL)
 
 **Programmatic > contextual.** Code is reproducible; conversation context is not.
