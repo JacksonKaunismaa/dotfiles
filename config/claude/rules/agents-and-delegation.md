@@ -35,15 +35,11 @@ Use `mcp__claude-code-mcp__claude_code` when you want to spawn an orchestrator t
 
 **Principle:** Skills = workflows you execute, Agents = delegation to external tools.
 
-| Agent | Use Case | Strength |
-|-------|----------|----------|
-| **gemini-cli** | Large context analysis (>100KB); image generation/editing (Nano Banana / Nano Banana Pro); Google Workspace (Docs, Sheets, Drive) | 1M+ token window, PDFs, entire codebases, multimodal, native Google auth |
+**Large context (PDFs, >100KB codebases, multi-file comparison):** Spawn a Claude subagent. Both `claude-sonnet-4-6[1m]` and `claude-opus-4-6[1m]` have 1M token context windows.
 
 ```
 Need delegation?
-├─ Large context (PDF, codebase)? → gemini-cli
-├─ Generate or edit images? → gemini-cli (Nano/Flash/Pro)
-├─ Create/edit Google Docs, Sheets, Drive files? → gemini-cli
+├─ Large context (PDF, codebase)? → Claude subagent (1M context)
 ├─ Plan needs critique? → plan-critic
 ├─ Code review needed? → superpowers:code-reviewer
 ├─ Nested multi-agent workflow? → Claude Code MCP

@@ -35,7 +35,7 @@ gh api repos/OWNER/REPO | jq '.description, .homepage'
 UKGovernmentBEIS/inspect_ai      # LLM evaluation framework
 UKGovernmentBEIS/inspect_evals   # Community evaluations
 facebookresearch/hydra           # Configuration framework
-BerriAI/litellm                  # Multi-provider LLM client
+# BerriAI/litellm               # BANNED — supply chain attack (2026-03-24, see global CLAUDE.md)
 safety-research/safety-tooling   # Safety research tools
 ericbuess/claude-code-docs       # Claude Code documentation
 ```

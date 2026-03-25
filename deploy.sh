@@ -43,6 +43,10 @@ if [[ $VIM == "true" ]]; then
     echo "source $DOT_DIR/config/vimrc" > $HOME/.vimrc
 fi
 
+# Matplotlib style
+mkdir -p $HOME/.config/matplotlib/stylelib
+ln -sf $DOT_DIR/config/matplotlib/anthropic.mplstyle $HOME/.config/matplotlib/stylelib/anthropic.mplstyle
+
 # Claude Code config
 "$DOT_DIR/deploy-claude.sh"
 

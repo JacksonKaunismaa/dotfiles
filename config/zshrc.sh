@@ -50,19 +50,26 @@ if [ -d "$FNM_PATH" ]; then
   eval "`fnm env`"
 fi
 
-# only in interactive shells …
+# SSH agent socket setup (interactive shells only)
 if [[ $- == *i* ]]; then
 
-  # … and only when NOT in an SSH‐forwarded session …
   if [[ -z "$SSH_CONNECTION" ]]; then
-
-    # … and only if systemd has actually created the socket locally …
+    # Local session: use systemd-managed agent socket
     SOCKET="$XDG_RUNTIME_DIR/ssh-agent.socket"
     if [[ -S "$SOCKET" ]]; then
       export SSH_AUTH_SOCK="$SOCKET"
     fi
 
+  else
+    # SSH session: pin forwarded agent to stable path for screen/tmux reattach
+    if [[ -n "$SSH_AUTH_SOCK" && "$SSH_AUTH_SOCK" != "$HOME/.ssh/agent.sock" ]]; then
+      mkdir -p "$HOME/.ssh"
+      ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/agent.sock.$$" && \
+      mv -f "$HOME/.ssh/agent.sock.$$" "$HOME/.ssh/agent.sock"
+      export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+    fi
   fi
+
 fi
 
 

@@ -13,11 +13,20 @@ Search for patterns that compromise experimental validity.
 
 Report findings first. Do NOT automatically fix issues — wait for the user to review each finding and confirm what action to take. Only make edits (fixes or AUDIT-OK tags) after the user explicitly approves.
 
-## IMPORTANT: Use subagents to read everything
+## IMPORTANT: How to dispatch subagents
 
-1. Do some initial searches to understand the codebase structure and figure out how to split up the work
-2. Launch subagents in parallel using the Agent tool to read files and check for the patterns below. Every file should be read.
-3. As a final step, grep for the patterns to make sure you didn't miss anything
+**Do NOT copy the pattern list into the subagent prompt.** Instead, tell each subagent to read this skill file and follow it. The skill file path is shown in the skill metadata (look for "Base directory for this skill" in the skill load output, then append `/SKILL.md`).
+
+**Max 8 source files per subagent.** Detection of subtle issues (e.g., a hardcoded string that defines an experimental baseline) degrades sharply above this threshold. At 10+ files, agents skim rather than scrutinize. Group files by pipeline/module — agents that audit a cohesive pipeline understand context better than agents given unrelated files.
+
+**Don't worry about spawning too many subagents.** It is always better to spawn too many than too few. Subagents run in parallel, so more agents = same wall-clock time but better coverage. For a 100-file codebase, 20+ agents is fine.
+
+### Steps
+
+1. Do initial searches to understand the codebase structure (file list, line counts, directory layout)
+2. Split files into batches of ≤8, grouped by pipeline or module. Prefer smaller batches for dense code (>200 lines/file average)
+3. Launch subagents in parallel — each gets a prompt like: "You are performing a scientific audit. Read the audit instructions at `<path>/SKILL.md` and follow them exactly. Audit these files: [list]"
+4. As a final step, grep for the critical patterns to catch anything subagents missed
 
 ## IMPORTANT: Precision over recall
 
@@ -39,9 +48,9 @@ The audit covers **source code only**. Skip the following:
 
 ### Critical severity
 
-- **Hardcoded fake data** — Any data that looks like it could be real but was invented/hardcoded instead of coming from actual sources. Examples: hardcoded example strings that "look like" real AI outputs, fabricated sample responses, placeholder text that resembles genuine data. If data appears realistic but isn't traced to a real source (file, API, database), flag it. This is the most severe violation — it completely invalidates any analysis built on top of it.
+- **Hardcoded fake data** — Any data that looks like it could be real but was invented/hardcoded instead of coming from actual sources. Examples: hardcoded example strings that "look like" real AI outputs, fabricated sample responses, fake input that goes into LLM prompts, placeholder text that resembles genuine data, etc. If data appears realistic but isn't traced to a real source (file, API, database), flag it. This is the most severe violation — it completely invalidates any analysis built on top of it.
 - **Global variables** — Module-level state that affects experiment behavior (directories, loggers, prompt names, thresholds). Must go through config objects. True constants like `PI = 3.14159` are fine.
-- **Magic values in function bodies** — Configuration values (model names, prompt names, thresholds, file paths, URLs) hardcoded inside functions instead of coming from config objects. These are impossible to override without editing code and easy to miss when reviewing experiment parameters. If a value could reasonably vary between runs or experiments, it belongs in a config object.
+- **Magic values in function bodies** — Configuration values (model names, prompt names, thresholds, file paths, URLs, etc.) hardcoded inside functions instead of coming from config objects. These are impossible to override without editing code and easy to miss when reviewing experiment parameters. If a value could reasonably vary between runs or experiments, it belongs in a config object.
 - `except Exception:` followed by `return 0`, `return False`, or a default value
 - `or 0`, `or 0.0`, `or ""` patterns that substitute defaults for missing data
 - `param = param or default` inside functions — this is just a default argument written sneakily to look like there isn't one

@@ -52,6 +52,14 @@ python run_my_experiment.py --project feb19-hardcode-auditbench-ct-qwen-32b --ex
 
 For parallel ablations, use `&` and `wait`.
 
+## Banned Dependencies
+
+| Package | Reason | Date | Reference |
+|---------|--------|------|-----------|
+| `litellm` | **Supply chain attack.** v1.82.8 on PyPI contained a `.pth` credential stealer that exfiltrates SSH keys, cloud creds, env vars, shell history on *any* Python startup (no import needed). PyPI publishing creds were compromised — do not trust any version until BerriAI confirms root cause and remediates. | 2026-03-24 | [GitHub #24512](https://github.com/BerriAI/litellm/issues/24512) |
+
+**NEVER install, add as dependency, or import any banned package.** If code requires one, find an alternative or ask the user.
+
 ## Backwards Compatibility
 
 **NEVER add backwards compatibility. No exceptions.**

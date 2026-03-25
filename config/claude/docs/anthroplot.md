@@ -17,8 +17,7 @@ anthroplot.set_defaults(pretty=True)  # Call before plotting
 **Alternative** (no module needed): Use the matplotlib style file:
 ```python
 import matplotlib.pyplot as plt
-plt.style.use('~/.config/matplotlib/stylelib/anthropic.mplstyle')
-# Or: plt.style.use('/path/to/dotfiles/config/matplotlib/anthropic.mplstyle')
+plt.style.use('anthropic')  # Requires anthropic.mplstyle in ~/.config/matplotlib/stylelib/ (deployed by deploy.sh)
 ```
 
 ## Key Colors
