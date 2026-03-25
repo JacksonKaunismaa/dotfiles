@@ -34,12 +34,35 @@ while (( "$#" )); do
     esac
 done
 
+# Detect if we can use sudo
+has_sudo=false
+if [ "$is_root" = true ]; then
+    has_sudo=true
+elif sudo -n true 2>/dev/null; then
+    has_sudo=true  # passwordless sudo or cached credentials
+elif [ -t 0 ]; then
+    # Interactive terminal — prompt once to cache credentials
+    echo "Some packages need sudo. Enter password (or Ctrl+C to skip):"
+    if sudo true 2>/dev/null; then
+        has_sudo=true
+    else
+        echo "sudo failed, continuing without system packages"
+    fi
+fi
+
+if [ "$has_sudo" = false ] && [ "$is_root" = false ]; then
+    echo "Note: no sudo available, skipping system package installs"
+fi
+
 # Function to conditionally prepend sudo
 maybe_sudo() {
-    if [ "$is_root" = false ]; then
+    if [ "$is_root" = true ]; then
+        "$@"
+    elif [ "$has_sudo" = true ]; then
         sudo "$@"
     else
-        "$@"
+        echo "SKIPPING (no sudo): $*"
+        return 1
     fi
 }
 
@@ -115,27 +138,35 @@ elif [ "$machine" == "Arch" ]; then
     check_and_collect jq
 
     if [ ${#needs_install[@]} -gt 0 ]; then
-        echo "Installing: ${needs_install[*]}"
-        maybe_sudo pacman -Syu
-        maybe_sudo pacman -S --needed "${needs_install[@]}"
+        if [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+            echo "Installing: ${needs_install[*]}"
+            maybe_sudo pacman -Syu
+            maybe_sudo pacman -S --needed "${needs_install[@]}"
+        else
+            echo "Skipping system packages (no sudo): ${needs_install[*]}"
+        fi
     else
         echo "All pacman packages already installed"
     fi
 
-    if ! command -v yay &>/dev/null; then
-        echo "Installing yay..."
-        maybe_sudo pacman -S --needed git base-devel
-        YAY_DIR=$(mktemp -d)
-        git clone https://aur.archlinux.org/yay.git "$YAY_DIR/yay"
-        (cd "$YAY_DIR/yay" && makepkg -si)
-        rm -rf "$YAY_DIR"
-    fi
+    if [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+        if ! command -v yay &>/dev/null; then
+            echo "Installing yay..."
+            maybe_sudo pacman -S --needed git base-devel
+            YAY_DIR=$(mktemp -d)
+            git clone https://aur.archlinux.org/yay.git "$YAY_DIR/yay"
+            (cd "$YAY_DIR/yay" && makepkg -si)
+            rm -rf "$YAY_DIR"
+        fi
 
-    needs_install=()
-    check_and_collect dust
-    check_and_collect peco
-    if [ ${#needs_install[@]} -gt 0 ]; then
-        yay -S "${needs_install[@]}"
+        if command -v yay &>/dev/null; then
+            needs_install=()
+            check_and_collect dust
+            check_and_collect peco
+            if [ ${#needs_install[@]} -gt 0 ]; then
+                yay -S "${needs_install[@]}"
+            fi
+        fi
     fi
 
 elif [ "$machine" == "Linux" ]; then
@@ -153,35 +184,47 @@ elif [ "$machine" == "Linux" ]; then
     check_and_collect jq
 
     if [ ${#needs_install[@]} -gt 0 ]; then
-        echo "Installing: ${needs_install[*]}"
-        maybe_sudo apt-get update -y
-        maybe_sudo apt-get install -y "${needs_install[@]}"
+        if [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+            echo "Installing: ${needs_install[*]}"
+            maybe_sudo apt-get update -y
+            maybe_sudo apt-get install -y "${needs_install[@]}"
+        else
+            echo "Skipping system packages (no sudo): ${needs_install[*]}"
+        fi
     else
         echo "All apt packages already installed"
-    fi
-
-    if ! command -v brew &>/dev/null; then
-        echo "Installing homebrew..."
-        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        echo "Homebrew installed, adding to path..."
-    fi
-    if [ -f /home/linuxbrew/.linuxbrew/bin/brew ]; then
-        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
     fi
 
     # eza and sd aren't in default apt repos — install via cargo
     if [ -f "$HOME/.cargo/env" ]; then
         . "$HOME/.cargo/env"
     fi
-    command -v eza &>/dev/null || cargo install eza
-    command -v sd &>/dev/null || cargo install sd
+    if command -v cargo &>/dev/null; then
+        command -v eza &>/dev/null || cargo install eza
+        command -v sd &>/dev/null || cargo install sd
+    fi
 
-    needs_install=()
-    check_and_collect dust
-    check_and_collect jless
-    check_and_collect peco
-    if [ ${#needs_install[@]} -gt 0 ]; then
-        brew install "${needs_install[@]}"
+    # brew requires sudo for default prefix on Linux — skip if no sudo
+    if command -v brew &>/dev/null; then
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" 2>/dev/null || true
+    elif [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+        echo "Installing homebrew..."
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        if [ -f /home/linuxbrew/.linuxbrew/bin/brew ]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+        fi
+    else
+        echo "Skipping homebrew (needs sudo)"
+    fi
+
+    if command -v brew &>/dev/null; then
+        needs_install=()
+        check_and_collect dust
+        check_and_collect jless
+        check_and_collect peco
+        if [ ${#needs_install[@]} -gt 0 ]; then
+            brew install "${needs_install[@]}"
+        fi
     fi
 
 elif [ "$machine" == "Mac" ]; then
