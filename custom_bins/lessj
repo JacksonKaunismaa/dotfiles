@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+r"""lessj: view JSON/JSONL exactly as `less` shows it (the LESSOPEN pipeline,
+jq pretty-print + bat JSON highlighting), but with \n escapes inside strings
+expanded to real newlines.
+
+Usage: lessj file.jsonl [more files]   or   ... | lessj
+
+Expansion must run on bat's *highlighted* output: expanded strings are no
+longer valid JSON, so highlighting first is the only way to keep colors
+identical to plain `less`. Each inserted newline re-emits the SGR codes in
+effect at the cut, because `less -R` drops attributes at line boundaries.
+"""
+
+import contextlib
+import re
+import shutil
+import signal
+import subprocess
+import sys
+
+SGR = re.compile(r"\x1b\[[0-9;]*m")
+RESETS = ("\x1b[0m", "\x1b[m")
+
+
+def expand_line(line: str) -> str:
+    out: list[str] = []
+    active: list[str] = []  # SGR codes in effect (cleared by reset)
+    run = 0                 # consecutive backslash text chars (ANSI codes between them don't break the run)
+    last_bs = -1            # out-index of the most recent backslash
+    i = 0
+    while i < len(line):
+        m = SGR.match(line, i)
+        if m:
+            code = m.group(0)
+            active = [] if code in RESETS else active + [code]
+            out.append(code)
+            i = m.end()
+            continue
+        ch = line[i]
+        if ch == "\\":
+            run += 1
+            last_bs = len(out)
+            out.append(ch)
+        elif ch == "n" and run % 2 == 1:
+            # An odd backslash run means the final backslash starts a \n
+            # escape (even = escaped backslashes followed by a literal n).
+            del out[last_bs]
+            out.append("\n")
+            out.extend(active)
+            run = 0
+        else:
+            run = 0
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def main() -> int:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # let less handle ^C
+    if not shutil.which("jq"):
+        sys.exit("lessj: jq not found")
+    bat = shutil.which("bat") or shutil.which("batcat")
+    if bat is None:
+        sys.exit("lessj: bat/batcat not found")
+
+    jq = subprocess.Popen(["jq", ".", *sys.argv[1:]], stdout=subprocess.PIPE)
+    hl = subprocess.Popen(
+        [bat, "--color=always", "--style=plain", "--paging=never", "-l", "json"],
+        stdin=jq.stdout, stdout=subprocess.PIPE, text=True, encoding="utf-8",
+    )
+    jq.stdout.close()
+    pager = subprocess.Popen(["less", "-R"], stdin=subprocess.PIPE, text=True, encoding="utf-8")
+
+    quit_early = False
+    try:
+        for line in hl.stdout:
+            pager.stdin.write(expand_line(line))
+        pager.stdin.close()
+    except BrokenPipeError:  # user quit less before EOF
+        quit_early = True
+        # Close now (flush may hit the dead pipe again) so the interpreter's
+        # shutdown finalizer doesn't try it and print "Exception ignored".
+        with contextlib.suppress(BrokenPipeError):
+            pager.stdin.close()
+        jq.terminate()
+        hl.terminate()
+    rc = pager.wait()
+    hl.wait()
+    if jq.wait() != 0 and not quit_early:
+        print("lessj: jq reported errors (view may be truncated)", file=sys.stderr)
+        return 1
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

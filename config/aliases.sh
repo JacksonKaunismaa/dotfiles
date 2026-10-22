@@ -1,0 +1,183 @@
+# -------------------------------------------------------------------
+# personal
+# -------------------------------------------------------------------
+
+alias zrc="cd $DOT_DIR/zsh"
+alias dot="cd $DOT_DIR"
+alias jp="jupyter lab"
+alias hn="hostname"
+
+# -------------------------------------------------------------------
+# general
+# -------------------------------------------------------------------
+
+alias cl="clear"
+
+# file and directories (-i only in real terminal sessions, not automation)
+if [ -t 0 ]; then
+  alias rm='rm -i'
+  alias cp='cp -i'
+  alias mv='mv -i'
+fi
+alias rmd='rm -rf'
+alias mkdir='mkdir -p'
+
+# find/read files
+alias h='head'
+alias t='tail'
+# alias rl="readlink -f"
+# less uses bat as a preprocessor (LESSOPEN) for syntax highlighting,
+# while keeping native less features like :n/:p for multi-file navigation.
+# lesser = raw less with no LESSOPEN preprocessing
+lesser() { LESSOPEN= command less "$@"; }
+# fd is now the real fd-find binary (installed via pacman)
+alias ff='find . -type f -name'
+alias which='type -a'
+
+# storage
+#alias du='du -kh' # file space
+alias df='duf'     # disk space
+alias usage='du -sh * 2>/dev/null | sort -rh'
+alias dus='du -sckx * | sort -nr'
+
+# add to path
+function add_to_path() {
+    p=$1
+    if [[ "$PATH" != *"$p"* ]]; then
+      export PATH="$p:$PATH"
+    fi
+}
+
+#
+#-------------------------------------------------------------
+# cd
+#-------------------------------------------------------------
+
+alias c='cd'
+alias ..='cd ..'
+alias ...='cd ../../'
+alias ....='cd ../../../'
+alias .2='cd ../../'
+alias .3='cd ../../../'
+alias .4='cd ../../../../'
+alias .5='cd ../../../../..'
+alias /='cd /'
+
+alias d='dirs -v'
+alias 1='cd -1'
+alias 2='cd -2'
+alias 3='cd -3'
+alias 4='cd -4'
+alias 5='cd -5'
+alias 6='cd -6'
+alias 7='cd -7'
+alias 8='cd -8'
+alias 9='cd -9'
+
+#-------------------------------------------------------------
+# git
+#-------------------------------------------------------------
+
+alias g="git"
+alias gcl="git clone"
+alias ga="git add"
+alias gaa="git add ."
+alias gau="git add -u"
+alias gc="git commit -m"
+alias gpu="git push"
+alias gpf="git push -f"
+alias gpo='git push origin $(git_current_branch)'
+alias gpp='git push --set-upstream origin $(git_current_branch)'
+
+alias gg='git gui'
+alias gl='git log'
+alias glog='git log --oneline --all --graph --decorate'
+
+alias gf="git fetch"
+alias gpl="git pull"
+
+alias grb="git rebase"
+alias grbm="git rebase master"
+alias grbc="git rebase --continue"
+alias grbs="git rebase --skip"
+alias grba="git rebase --abort"
+
+alias gd="git diff"
+alias gdc="git diff --cached"
+alias gdt="git difftool"
+alias gs="git status"
+
+alias gco="git checkout"
+alias gcb="git checkout -b"
+alias gcm="git checkout master"
+
+alias grhead="git reset HEAD^"
+alias grhard="git fetch origin && git reset --hard"
+
+alias gst="git stash"
+alias gstp="git stash pop"
+alias gsta="git stash apply"
+alias gstd="git stash drop"
+alias gstc="git stash clear"
+
+alias ggsup='git branch --set-upstream-to=origin/$(git_current_branch)'
+alias gpsup='git push --set-upstream origin $(git_current_branch)'
+alias gbc='git branch | cat'
+
+#-------------------------------------------------------------
+# tmux
+#-------------------------------------------------------------
+
+alias ta="tmux attach"
+alias taa="tmux attach -t"
+alias tad="tmux attach -d -t"
+alias td="tmux detach"
+alias ts="tmux new-session -s"
+alias tl="tmux list-sessions"
+alias tkill="tmux kill-server"
+alias tdel="tmux kill-session -t"
+
+#-------------------------------------------------------------
+# ls
+#-------------------------------------------------------------
+
+alias l="eza --classify"
+alias ll="eza -l --group-directories-first --git"
+alias la='eza -la --git'         # show hidden files
+alias lx='eza -l --sort=ext'    # sort by extension
+alias lk='eza -l --sort=size'   # sort by size
+alias lt='eza -l --sort=modified' # sort by date
+alias lr='eza -lR'              # recursive ls
+alias tree='eza --tree'         # tree view
+
+#-------------------------------------------------------------
+# chmod
+#-------------------------------------------------------------
+
+chw () {
+  if [ "$#" -eq 1 ]; then
+    chmod a+w $1
+  else
+    echo "Usage: chw <dir>" >&2
+  fi
+}
+chx () {
+  if [ "$#" -eq 1 ]; then
+    chmod a+x $1
+  else
+    echo "Usage: chx <dir>" >&2
+  fi
+}
+
+#-------------------------------------------------------------
+# env
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# claude code
+#-------------------------------------------------------------
+alias fx='$HOME/go/bin/fx'
+
+alias sv="source .venv/bin/activate"
+alias de="deactivate"
+alias ma="micromamba activate"
+alias md="micromamba deactivate"

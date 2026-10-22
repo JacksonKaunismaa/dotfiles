@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# DEPLOY: laptop
+# Per-workspace floating notes scratchpad.
+# Toggle: if a notes-scratch window exists on the current workspace, close it;
+# else spawn a translucent kitty running micro on this workspace's notes file.
+set -euo pipefail
+
+NOTES_DIR="$HOME/.local/share/notes-scratch"
+mkdir -p "$NOTES_DIR"
+
+WS_ID=$(hyprctl activeworkspace -j | jq -r '.id')
+NOTE_FILE="$NOTES_DIR/ws${WS_ID}.md"
+
+EXISTING=$(hyprctl clients -j \
+  | jq -r --argjson ws "$WS_ID" \
+      '.[] | select(.class == "notes-scratch" and .workspace.id == $ws) | .address' \
+  | head -n1)
+
+if [[ -n "$EXISTING" ]]; then
+  # Hyprland 0.55 (lua config) evaluates `hyprctl dispatch` args as lua, so the
+  # legacy `closewindow address:…` no longer parses. Use the hl.dsp.* form;
+  # `window = "address:…"` targets this window regardless of focus.
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$EXISTING\" })" >/dev/null
+  exit 0
+fi
+
+touch "$NOTE_FILE"
+
+# --class sets WM class for Hyprland windowrules (only this instance).
+# --title is informational, includes workspace id for debugging.
+# -o background_opacity=0.7 is per-instance; does not modify ~/.config/kitty/kitty.conf.
+# micro -autosave 5 writes every 5s so accidental window closes don't lose content.
+# NB: confirm_os_window_close is intentionally left at the kitty.conf global (1),
+# so closing the panel (Super+S or the window-close path) still asks to confirm —
+# a deliberate guard against accidentally discarding notes.
+setsid -f kitty \
+  --class notes-scratch \
+  --title "notes-scratch ws${WS_ID}" \
+  -o background_opacity=0.7 \
+  -- "$HOME/.local/bin/notes-scratch-runner" "$NOTE_FILE" \
+  >/dev/null 2>&1
+
+# Size and position the window once it appears, using the current monitor's
+# reserved area (so it fits below the bar on any monitor). reserved is
+# [left, top, right, bottom] in Hyprland's hyprctl output.
+# The exact-move coordinates are GLOBAL layout coordinates, not monitor-local —
+# offset by the monitor's position (x, y) or the panel lands on whichever
+# monitor sits at (0,0) (the laptop screen) instead of the focused one.
+WIDTH=520
+MON_NAME=$(hyprctl activeworkspace -j | jq -r '.monitor')
+read -r MX MY MH RL RT RB < <(hyprctl monitors -j \
+  | jq -r --arg m "$MON_NAME" \
+      '.[] | select(.name == $m) | "\(.x) \(.y) \(.height) \(.reserved[0]) \(.reserved[1]) \(.reserved[3])"')
+USABLE_H=$((MH - RT - RB))
+PANEL_X=$((MX + RL))
+PANEL_Y=$((MY + RT))
+
+# Poll briefly for the new window (kitty + Hyprland take ~50–300ms typically).
+for _ in $(seq 1 40); do
+  sleep 0.05
+  ADDR=$(hyprctl clients -j \
+    | jq -r --argjson ws "$WS_ID" \
+        '.[] | select(.class == "notes-scratch" and .workspace.id == $ws) | .address' \
+    | head -n1)
+  [[ -n "$ADDR" ]] && break
+done
+
+if [[ -n "${ADDR:-}" ]]; then
+  # Hyprland 0.55 (lua config): `hyprctl dispatch` args are evaluated as lua, so
+  # the legacy `resizewindowpixel exact …,address:…` syntax no longer works.
+  # Use the hl.dsp.* dispatchers; `window = "address:…"` targets this specific
+  # window even if focus has moved. Two calls (not --batch) keep the lua args clean.
+  hyprctl dispatch "hl.dsp.window.resize({ x = ${WIDTH}, y = ${USABLE_H}, \"exact\", window = \"address:${ADDR}\" })" >/dev/null
+  hyprctl dispatch "hl.dsp.window.move({ x = ${PANEL_X}, y = ${PANEL_Y}, \"exact\", window = \"address:${ADDR}\" })" >/dev/null
+fi

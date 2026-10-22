@@ -1,0 +1,233 @@
+#!/bin/bash
+# Notify via ntfy when Claude Code task takes > threshold minutes
+# Used by UserPromptSubmit and Stop hooks
+#
+# On Stop: extracts last assistant message from transcript, summarizes
+# via Haiku API call, sends condensed notification. Falls back to
+# truncated raw text if API call fails.
+
+THRESHOLD_MINS=20
+TIMESTAMP_DIR="/tmp/claude-sessions"
+CONF_FILE="$HOME/.claude/ntfy.conf"
+LOG_FILE="$HOME/.claude/hooks/ntfy-debug.log"
+
+mkdir -p "$TIMESTAMP_DIR"
+
+# Cleanup old timestamp files (older than 7 days)
+find "$TIMESTAMP_DIR" -type f -mtime +7 -delete 2>/dev/null
+
+# Read hook input
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty')
+
+[ -z "$SESSION_ID" ] && exit 0
+
+TIMESTAMP_FILE="$TIMESTAMP_DIR/$SESSION_ID"
+
+# Log every hook invocation
+echo "$(date '+%Y-%m-%d %H:%M:%S') | event=$HOOK_EVENT | session=$SESSION_ID | pid=$$ | file=$TIMESTAMP_FILE" >> "$LOG_FILE"
+
+if [ "$HOOK_EVENT" = "UserPromptSubmit" ]; then
+    NOW=$(date +%s)
+    INPUT_KEYS=$(echo "$INPUT" | jq -r 'keys | join(", ")' 2>/dev/null)
+    # Try known field names for the user's prompt
+    USER_PROMPT=$(echo "$INPUT" | jq -r '.user_prompt // .prompt // .user_message // empty')
+
+    # Skip task notifications — these are background task completions injected by
+    # Claude Code, not real user messages. They reset the timer and kill notifications.
+    case "$USER_PROMPT" in
+        '<task-notification>'*)
+            echo "  -> skipped task-notification (${#USER_PROMPT} chars)" >> "$LOG_FILE"
+            exit 0
+            ;;
+    esac
+
+    # Compute time since last UserPromptSubmit for this session
+    DELTA_S=""
+    PREV_TS=""
+    if [ -f "$TIMESTAMP_FILE" ]; then
+        PREV_TS=$(jq -r '.start_time // empty' "$TIMESTAMP_FILE" 2>/dev/null)
+        [ -n "$PREV_TS" ] && DELTA_S=$((NOW - PREV_TS))
+    fi
+
+    # Burst detection: if timestamp file was written <3s ago, dump full diagnostics
+    BURST_FLAG=""
+    if [ -n "$DELTA_S" ] && [ "$DELTA_S" -le 3 ]; then
+        BURST_FLAG=" BURST"
+        PROMPT_HEAD=$(printf '%s' "$USER_PROMPT" | head -c 300 | tr '\n' ' ')
+        ALL_FIELDS=$(echo "$INPUT" | jq -c 'to_entries | map(select(.key != "prompt" and .key != "user_prompt" and .key != "user_message" and .key != "transcript_path")) | from_entries' 2>/dev/null)
+        echo "  -> BURST delta=${DELTA_S}s prompt (${#USER_PROMPT} chars): ${PROMPT_HEAD}" >> "$LOG_FILE"
+        echo "  -> BURST fields: ${ALL_FIELDS}" >> "$LOG_FILE"
+    fi
+
+    jq -n --arg ts "$NOW" --arg prompt "$USER_PROMPT" \
+        '{"start_time": $ts, "user_prompt": $prompt}' > "$TIMESTAMP_FILE"
+    echo "  -> wrote timestamp $NOW, input_keys=[$INPUT_KEYS], prompt_len=${#USER_PROMPT}, delta=${DELTA_S:-first}s${BURST_FLAG}" >> "$LOG_FILE"
+    exit 0
+fi
+
+if [ "$HOOK_EVENT" = "Stop" ]; then
+    if [ ! -f "$TIMESTAMP_FILE" ]; then
+        echo "  -> no timestamp file found, exiting" >> "$LOG_FILE"
+        exit 0
+    fi
+
+    SESSION_DATA=$(cat "$TIMESTAMP_FILE")
+    START_TIME=$(echo "$SESSION_DATA" | jq -r '.start_time // empty' 2>/dev/null)
+    # Backwards compat: old format was just a bare timestamp
+    [ -z "$START_TIME" ] && START_TIME="$SESSION_DATA"
+    [ -z "$START_TIME" ] && exit 0
+
+    USER_PROMPT=$(echo "$SESSION_DATA" | jq -r '.user_prompt // empty' 2>/dev/null)
+
+    NOW=$(date +%s)
+    ELAPSED_SECS=$((NOW - START_TIME))
+    ELAPSED_MINS=$((ELAPSED_SECS / 60))
+    INPUT_KEYS=$(echo "$INPUT" | jq -r 'keys | join(", ")' 2>/dev/null)
+    STOP_REASON=$(echo "$INPUT" | jq -r '.reason // empty')
+    echo "  -> read timestamp $START_TIME, now=$NOW, elapsed=${ELAPSED_MINS}m (${ELAPSED_SECS}s), reason=$STOP_REASON, input_keys=[$INPUT_KEYS]" >> "$LOG_FILE"
+
+    # Log near-misses: 5-8 minutes = likely would have fired without timer reset
+    if [ "$ELAPSED_MINS" -ge 5 ] && [ "$ELAPSED_MINS" -lt "$THRESHOLD_MINS" ]; then
+        echo "  -> NEAR-MISS ${ELAPSED_MINS}m (threshold=${THRESHOLD_MINS}m)" >> "$LOG_FILE"
+    fi
+
+    if [ "$ELAPSED_MINS" -ge "$THRESHOLD_MINS" ]; then
+        # Load ntfy config
+        [ -f "$CONF_FILE" ] && source "$CONF_FILE"
+
+        # Get project name from cwd
+        CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+        PROJECT=$(basename "$CWD")
+
+        # --- Extract assistant text ---
+        # Priority: last_assistant_message (from hook input) > transcript parsing
+        # last_assistant_message is provided by Claude Code directly (no race condition).
+        LAST_ASSISTANT_TEXT=$(echo "$INPUT" | jq -r '.last_assistant_message // empty')
+        TOOL_NAMES=""
+
+        if [ -n "$LAST_ASSISTANT_TEXT" ]; then
+            echo "  -> last_assistant_message (${#LAST_ASSISTANT_TEXT} chars): ${LAST_ASSISTANT_TEXT:0:80}..." >> "$LOG_FILE"
+        else
+            echo "  -> last_assistant_message empty, falling back to transcript" >> "$LOG_FILE"
+            # Fall back to transcript parsing — search recent messages for text
+            TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+            if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+                TRANSCRIPT_LINES=$(wc -l < "$TRANSCRIPT")
+                LAST_TYPE=$(tail -1 "$TRANSCRIPT" | jq -r '.type // empty' 2>/dev/null)
+                echo "  -> transcript: $TRANSCRIPT ($TRANSCRIPT_LINES lines, last_type=$LAST_TYPE)" >> "$LOG_FILE"
+
+                # Search up to 10 recent assistant messages for text content
+                LAST_ASSISTANT_TEXT=$(tac "$TRANSCRIPT" \
+                    | grep -m10 '"role":"assistant"' \
+                    | jq -r '
+                        [.message.content[] | select(.type=="text") | .text]
+                        | select(length > 0)
+                        | map(gsub("\n"; " ")) | join(" | ")' 2>/dev/null \
+                    | sed '/^[[:space:]]*$/d' \
+                    | head -1 \
+                    | head -c 8000)
+
+                if [ -n "$LAST_ASSISTANT_TEXT" ]; then
+                    echo "  -> transcript text (${#LAST_ASSISTANT_TEXT} chars): ${LAST_ASSISTANT_TEXT:0:80}..." >> "$LOG_FILE"
+                else
+                    # Collect tool names as minimal context
+                    TOOL_NAMES=$(tac "$TRANSCRIPT" \
+                        | grep -m10 '"role":"assistant"' \
+                        | jq -r '[.message.content[] | select(.type=="tool_use") | .name] | .[]' 2>/dev/null \
+                        | sort -u | paste -sd', ')
+                    echo "  -> no text in last 10 assistant msgs, tool names: ${TOOL_NAMES:-none}" >> "$LOG_FILE"
+                fi
+            elif [ -n "$TRANSCRIPT" ]; then
+                echo "  -> transcript path set but file missing: $TRANSCRIPT" >> "$LOG_FILE"
+            else
+                echo "  -> no transcript_path in hook input" >> "$LOG_FILE"
+            fi
+        fi
+
+        TITLE="CC Done (${ELAPSED_MINS}m) — ${PROJECT}"
+        rm -f "$TIMESTAMP_FILE"
+
+        # Background the entire summarize+send flow so the hook exits instantly.
+        # Haiku summary with fallback to raw text — only one notification sent.
+        HAIKU_INPUT=""
+        if [ -n "$LAST_ASSISTANT_TEXT" ]; then
+            HAIKU_INPUT="${LAST_ASSISTANT_TEXT:0:4000}"
+        elif [ -n "$TOOL_NAMES" ]; then
+            HAIKU_INPUT="[No text output — assistant used these tools: $TOOL_NAMES]"
+        fi
+
+        (
+            echo "  -> [bg] subshell started pid=$$ haiku_input_len=${#HAIKU_INPUT} api_key=${ANTHROPIC_API_KEY:+set}" >> "$LOG_FILE"
+            SUMMARY=""
+
+            if [ -n "$HAIKU_INPUT" ] && [ -n "$ANTHROPIC_API_KEY" ]; then
+                PROMPT_SECTION=""
+                [ -n "$USER_PROMPT" ] && PROMPT_SECTION="User message: $USER_PROMPT\n\n"
+                API_BODY=$(jq -n \
+                    --arg text "$HAIKU_INPUT" \
+                    --arg ctx "$PROMPT_SECTION" \
+                    '{
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 150,
+                        "system": "Generate a phone notification summary of a conversation between a user and a coding assistant. Output ONLY a factual summary of what was done (max 280 chars). Never ask questions. Never say you lack context. If the text is unclear, summarize what you can see. No preamble.",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": ($ctx + "Coding assistant reply:\n" + $text)
+                            }
+                        ]
+                    }')
+
+                HAIKU_RAW=$(curl -s --max-time 15 -w "\n%{http_code}" \
+                    -H "x-api-key: $ANTHROPIC_API_KEY" \
+                    -H "anthropic-version: 2023-06-01" \
+                    -H "content-type: application/json" \
+                    -d "$API_BODY" \
+                    "https://api.anthropic.com/v1/messages" 2>&1)
+                HAIKU_EXIT=$?
+                HAIKU_HTTP=$(echo "$HAIKU_RAW" | tail -1)
+                HAIKU_BODY=$(echo "$HAIKU_RAW" | sed '$d')
+                SUMMARY=$(echo "$HAIKU_BODY" | jq -r '.content[0].text // empty' 2>/dev/null)
+
+                echo "  -> [bg] haiku: exit=$HAIKU_EXIT http=$HAIKU_HTTP summary='${SUMMARY:0:100}' raw='${HAIKU_BODY:0:200}'" >> "$LOG_FILE"
+            else
+                echo "  -> [bg] skipping haiku: haiku_input=${HAIKU_INPUT:+(set)} api_key=${ANTHROPIC_API_KEY:+(set)}" >> "$LOG_FILE"
+            fi
+
+            # Fallback if Haiku failed or wasn't attempted
+            if [ -z "$SUMMARY" ]; then
+                if [ -n "$LAST_ASSISTANT_TEXT" ]; then
+                    SUMMARY="${LAST_ASSISTANT_TEXT:0:280}"
+                    [ ${#LAST_ASSISTANT_TEXT} -gt 280 ] && SUMMARY="${SUMMARY}..."
+                elif [ -n "$TOOL_NAMES" ]; then
+                    SUMMARY="Used tools: $TOOL_NAMES"
+                elif [ -n "$STOP_REASON" ]; then
+                    SUMMARY="$STOP_REASON"
+                else
+                    SUMMARY="(no summary available)"
+                fi
+                echo "  -> [bg] using fallback: '${SUMMARY:0:100}'" >> "$LOG_FILE"
+            fi
+
+            echo "  -> [bg] SENDING: title='$TITLE' body='${SUMMARY:0:100}...' (start=$START_TIME)" >> "$LOG_FILE"
+            NTFY_RESP=$(curl -s -w "\n%{http_code}" -u "$NTFY_USERNAME:$NTFY_PASSWORD" \
+                -d "$SUMMARY" \
+                -H "Title: $TITLE" \
+                -H "Priority: urgent" \
+                "https://$NTFY_URL/$NTFY_TOPIC_CC" 2>&1)
+            NTFY_EXIT=$?
+            NTFY_HTTP=$(echo "$NTFY_RESP" | tail -1)
+            NTFY_BODY=$(echo "$NTFY_RESP" | sed '$d' | head -c 200)
+            echo "  -> [bg] ntfy: exit=$NTFY_EXIT http=$NTFY_HTTP body='$NTFY_BODY'" >> "$LOG_FILE"
+            echo "  -> [bg] done $(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+        ) &
+        disown
+    else
+        echo "  -> below threshold, no notification" >> "$LOG_FILE"
+    fi
+    exit 0
+fi
+
+exit 0

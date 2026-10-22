@@ -1,0 +1,24 @@
+# Friction Alternatives
+
+## Tool failures: pivot, don't retry
+
+When a tool or sandbox blocks you, try a different approach. Don't retry the same failing command more than once.
+
+| When this fails... | Try this |
+|--------------------|---------------------|
+| `rm` blocked | `trash` (macOS) > `mv` to `.bak` or `archive/` |
+| Writing to `/tmp` | `$TMPDIR` (set to `/tmp/claude/`), `/run/user/$(id -u)/`, or project-local `./tmp/` |
+| Heredoc in git commit | `printf > $TMPDIR/commit_msg.txt && git commit -F` |
+| `Edit` fails ("file modified since read") | Re-read, retry with fresh `old_string`. Don't fall back to `Write`. |
+| Subagent fails or times out | Do it directly in main context, don't retry the agent |
+| Codex/delegated agent fails | Same — fall back to doing it yourself |
+| API/network timeout | Check client-side config (`max_connections` too high?) before blaming infrastructure |
+| MCP tool not found | Try alternative names, then Bash |
+
+## Auth walls: ask early
+
+When a task needs an authenticated service (Notion, Google Drive, private repos, Confluence, Jira, etc.) and I haven't given you access, ask on the first attempt. Don't burn context on doomed approaches like WebFetch on a login page or unauthenticated API calls. Recognize the auth wall and escalate.
+
+## Personal repos: prefer action
+
+For personal repos and dotfiles, default to action over caution. I know my repo. Don't suggest `.gitignore`, branching, or PRs unless I ask. If you need to flag a risk, flag it once and proceed when I confirm.

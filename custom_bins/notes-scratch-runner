@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# DEPLOY: laptop
+# Inside-kitty wrapper for notes-scratch: runs micro with scratchpad-friendly
+# options, and on exit archives the file to .archive/ (recoverable).
+# Spawned by ~/.local/bin/notes-scratch-toggle inside the kitty window.
+set -u
+
+NOTE_FILE="$1"
+ARCHIVE_DIR="$HOME/.local/share/notes-scratch/.archive"
+mkdir -p "$ARCHIVE_DIR"
+
+archive_on_exit() {
+  if [[ -s "$NOTE_FILE" ]]; then
+    local ts base
+    ts=$(date -u +%Y%m%d_%H%M%S)
+    base=$(basename "$NOTE_FILE" .md)
+    mv "$NOTE_FILE" "$ARCHIVE_DIR/${base}_${ts}.md" 2>/dev/null || true
+  else
+    rm -f "$NOTE_FILE"
+  fi
+}
+trap archive_on_exit EXIT
+
+# softwrap + wordwrap: visual wrap at word boundaries, no newlines inserted.
+# statusformatl: drop filename — keep modified indicator and line:col.
+# Default statusformatr (keybind hints) remains.
+micro \
+  -autosave 5 \
+  -softwrap true \
+  -wordwrap true \
+  -colorscheme transparent \
+  -statusformatl '$(modified) $(line):$(col)' \
+  "$NOTE_FILE"

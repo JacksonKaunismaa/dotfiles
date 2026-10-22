@@ -1,0 +1,13 @@
+#!/bin/sh
+# git SSH commit-signing wrapper: sign with the key file directly, never via
+# ssh-agent. Set as `git config --global gpg.ssh.program`.
+#
+# Why: `Host * AddKeysToAgent confirm` in ~/.ssh/config loads id_ed25519 into
+# the agent with a per-use confirmation. `ssh-keygen -Y sign` prefers the agent
+# when the key is present there, so every commit pops an "Allow use of key?"
+# seahorse dialog -- and if that dialog renders where you can't see it, it sits
+# unanswered and blocks the ENTIRE agent, hanging every commit and ssh-agent op
+# (observed: one stuck 1h24m). Signing straight from the key file
+# needs no agent and no prompt. This only affects signing
+# (gpg.ssh.program); interactive ssh still gets the `confirm` protection.
+exec env -u SSH_AUTH_SOCK ssh-keygen "$@"

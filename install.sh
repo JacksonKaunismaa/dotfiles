@@ -1,0 +1,336 @@
+#!/bin/bash
+set -uo pipefail
+USAGE=$(cat <<-END
+    Usage: ./install.sh [OPTION]
+    Install dotfile dependencies on mac, arch linux, or other linux distributions.
+
+    By default, installs everything (zsh, tmux, CLI tools, rust, claude, oh-my-zsh).
+    Skips anything already installed. Only uses sudo for system packages.
+
+    OPTIONS:
+        --force      force redownload of oh-my-zsh and plugins
+        --is-root    run commands without sudo (for containers)
+        --no-pkg     skip package manager installs, build zsh from source (restricted environments)
+END
+)
+
+force=false
+is_root=false
+no_pkg=false
+while (( "$#" )); do
+    case "$1" in
+        -h|--help)
+            echo "$USAGE" && exit 1 ;;
+        --force)
+            force=true && shift ;;
+        --is-root)
+            is_root=true && shift ;;
+        --no-pkg)
+            no_pkg=true && shift ;;
+        --) # end argument parsing
+            shift && break ;;
+        -*|--*=) # unsupported flags
+            echo "Error: Unsupported flag $1" >&2 && exit 1 ;;
+    esac
+done
+
+# Detect if we can use sudo
+has_sudo=false
+if [ "$is_root" = true ]; then
+    has_sudo=true
+elif sudo -n true 2>/dev/null; then
+    has_sudo=true  # passwordless sudo or cached credentials
+elif [ -t 0 ]; then
+    # Interactive terminal — prompt once to cache credentials
+    echo "Some packages need sudo. Enter password (or Ctrl+C to skip):"
+    if sudo true 2>/dev/null; then
+        has_sudo=true
+    else
+        echo "sudo failed, continuing without system packages"
+    fi
+fi
+
+if [ "$has_sudo" = false ] && [ "$is_root" = false ]; then
+    echo "Note: no sudo available, skipping system package installs"
+fi
+
+# Function to conditionally prepend sudo
+maybe_sudo() {
+    if [ "$is_root" = true ]; then
+        "$@"
+    elif [ "$has_sudo" = true ]; then
+        sudo "$@"
+    else
+        echo "SKIPPING (no sudo): $*"
+        return 1
+    fi
+}
+
+# Collect packages that need installing, then do a single sudo call for the batch
+needs_install=()
+
+check_and_collect() {
+    local cmd="$1"
+    local pkg="${2:-$1}"
+    if command -v "$cmd" &>/dev/null; then
+        echo "$cmd already installed, skipping"
+    else
+        needs_install+=("$pkg")
+    fi
+}
+
+operating_system="$(uname -s)"
+case "${operating_system}" in
+    Linux*)
+        if [ -f "/etc/arch-release" ]; then
+            machine=Arch
+        else
+            machine=Linux
+        fi
+        ;;
+    Darwin*)    machine=Mac;;
+    *)          machine="UNKNOWN:${operating_system}"
+esac
+
+if [ "$no_pkg" = true ]; then
+    echo "Skipping package manager installs (--no-pkg)"
+
+    # Local zsh install from source
+    if [ -x "$HOME/.local/bin/zsh" ] && [ "$force" = false ]; then
+        echo "zsh already installed at ~/.local/bin/zsh, skipping (use --force to reinstall)"
+    else
+        echo "Installing zsh from source to ~/.local..."
+        mkdir -p ~/.local
+        BUILD_DIR=$(mktemp -d -p "$HOME" .zsh-build.XXXXXX)
+        ZSH_VERSION="5.9"
+        ZSH_TAR="zsh-${ZSH_VERSION}.tar.xz"
+        cd "$BUILD_DIR"
+        curl -L "https://sourceforge.net/projects/zsh/files/zsh/${ZSH_VERSION}/${ZSH_TAR}/download" -o "$ZSH_TAR"
+        tar xf "$ZSH_TAR"
+        cd "zsh-${ZSH_VERSION}"
+        if ./configure --prefix="$HOME/.local" && make && make install; then
+            echo "zsh built from source and installed to ~/.local/bin/zsh"
+        else
+            echo "Source build failed, falling back to prebuilt static binary..."
+            cd "$HOME"
+            sh -c "$(curl -fsSL https://raw.githubusercontent.com/romkatv/zsh-bin/master/install)" -- -d ~/.local -q
+        fi
+        rm -rf "$BUILD_DIR"
+        echo "make sure ~/.local/bin is in your PATH"
+    fi
+
+elif [ "$machine" == "Arch" ]; then
+    check_and_collect zsh
+    check_and_collect tmux
+    check_and_collect rg ripgrep
+    check_and_collect jless
+    check_and_collect rustup
+    check_and_collect gitleaks
+    check_and_collect git-lfs
+    check_and_collect less
+    check_and_collect htop
+    check_and_collect bat
+    check_and_collect duf
+    check_and_collect eza
+    check_and_collect delta git-delta
+    check_and_collect zoxide
+    check_and_collect fd
+    check_and_collect sd
+    check_and_collect btop
+    check_and_collect jq
+
+    if [ ${#needs_install[@]} -gt 0 ]; then
+        if [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+            echo "Installing: ${needs_install[*]}"
+            maybe_sudo pacman -Syu
+            maybe_sudo pacman -S --needed "${needs_install[@]}"
+        else
+            echo "Skipping system packages (no sudo): ${needs_install[*]}"
+        fi
+    else
+        echo "All pacman packages already installed"
+    fi
+
+    if [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+        if ! command -v yay &>/dev/null; then
+            echo "Installing yay..."
+            maybe_sudo pacman -S --needed git base-devel
+            YAY_DIR=$(mktemp -d)
+            git clone https://aur.archlinux.org/yay.git "$YAY_DIR/yay"
+            (cd "$YAY_DIR/yay" && makepkg -si)
+            rm -rf "$YAY_DIR"
+        fi
+
+        if command -v yay &>/dev/null; then
+            needs_install=()
+            check_and_collect dust
+            check_and_collect peco
+            if [ ${#needs_install[@]} -gt 0 ]; then
+                yay -S "${needs_install[@]}"
+            fi
+        fi
+    fi
+
+elif [ "$machine" == "Linux" ]; then
+    check_and_collect zsh
+    check_and_collect tmux
+    check_and_collect rg ripgrep
+    check_and_collect less
+    check_and_collect htop
+    check_and_collect batcat bat
+    check_and_collect duf
+    check_and_collect delta git-delta
+    check_and_collect zoxide
+    check_and_collect fdfind fd-find
+    check_and_collect git-lfs  # gitleaks isn't in older apt repos: it comes from linuxbrew below
+    check_and_collect btop
+    check_and_collect jq
+    check_and_collect python3            # deploy-claude.sh builds settings.json with it
+    check_and_collect cc build-essential  # C compiler/linker for the cargo builds below
+
+    if [ ${#needs_install[@]} -gt 0 ]; then
+        if [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+            echo "Installing: ${needs_install[*]}"
+            maybe_sudo apt-get update -y
+            # One unknown name makes apt-get refuse the whole batch (e.g. git-delta isn't in
+            # Ubuntu 22.04), so install only what this release has and say what's skipped.
+            available=()
+            for p in "${needs_install[@]}"; do
+                if apt-cache show "$p" &>/dev/null; then available+=("$p"); else echo "  not in this release's apt repos, skipping: $p"; fi
+            done
+            [ ${#available[@]} -gt 0 ] && maybe_sudo apt-get install -y "${available[@]}"
+        else
+            echo "Skipping system packages (no sudo): ${needs_install[*]}"
+        fi
+    else
+        echo "All apt packages already installed"
+    fi
+
+    # eza and sd aren't in default apt repos — install via cargo
+    if [ -f "$HOME/.cargo/env" ]; then
+        . "$HOME/.cargo/env"
+    fi
+    if command -v cargo &>/dev/null; then
+        command -v eza &>/dev/null || cargo install eza
+        command -v sd &>/dev/null || cargo install sd
+    fi
+
+    # brew requires sudo for default prefix on Linux — skip if no sudo
+    if command -v brew &>/dev/null; then
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" 2>/dev/null || true
+    elif [ "$has_sudo" = true ] || [ "$is_root" = true ]; then
+        echo "Installing homebrew..."
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        if [ -f /home/linuxbrew/.linuxbrew/bin/brew ]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+        fi
+    else
+        echo "Skipping homebrew (needs sudo)"
+    fi
+
+    if command -v brew &>/dev/null; then
+        needs_install=()
+        check_and_collect dust
+        check_and_collect jless
+        check_and_collect peco
+        check_and_collect gitleaks
+        if [ ${#needs_install[@]} -gt 0 ]; then
+            brew install "${needs_install[@]}"
+        fi
+    fi
+
+elif [ "$machine" == "Mac" ]; then
+    if ! command -v realpath &>/dev/null; then
+        maybe_sudo brew install coreutils
+    fi
+
+    needs_install=()
+    check_and_collect rg ripgrep
+    check_and_collect gitleaks
+    check_and_collect git-lfs
+    check_and_collect dust
+    check_and_collect jless
+    check_and_collect bat
+    check_and_collect duf
+    check_and_collect eza
+    check_and_collect delta git-delta
+    check_and_collect zoxide
+    check_and_collect fd
+    check_and_collect sd
+    check_and_collect btop
+    check_and_collect jq
+    check_and_collect peco
+
+    if [ ${#needs_install[@]} -gt 0 ]; then
+        maybe_sudo brew install "${needs_install[@]}"
+    fi
+
+    ! command -v zsh &>/dev/null && maybe_sudo brew install zsh
+    ! command -v tmux &>/dev/null && maybe_sudo brew install tmux
+    maybe_sudo defaults write -g InitialKeyRepeat -int 10 # normal minimum is 15 (225 ms)
+    maybe_sudo defaults write -g KeyRepeat -int 1 # normal minimum is 2 (30 ms)
+    maybe_sudo defaults write -g com.apple.mouse.scaling 5.0
+    maybe_sudo defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false
+fi
+
+echo "Done installing basics."
+
+# Ensure local bin is in PATH for oh-my-zsh installer to find zsh
+export PATH="$HOME/.local/bin:$PATH"
+
+# Install rust (needed for cargo-installed tools and Claude Code extensions)
+if ! command -v rustup &>/dev/null; then
+    echo "Installing rust..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+else
+    echo "rust already installed"
+fi
+if [ -f "$HOME/.cargo/env" ]; then
+    . "$HOME/.cargo/env"
+fi
+
+# Install Claude Code CLI (independent of oh-my-zsh)
+if ! command -v claude &>/dev/null; then
+    echo "Installing Claude Code..."
+    curl -fsSL https://claude.ai/install.sh | bash
+else
+    echo "Claude Code already installed"
+fi
+
+# Setting up oh my zsh and oh my zsh plugins
+ZSH=~/.oh-my-zsh
+ZSH_CUSTOM=$ZSH/custom
+if [ -d "$ZSH" ] && [ "$force" = "false" ]; then
+    echo "Skipping download of oh-my-zsh and related plugins, pass --force to force redownload"
+else
+    echo " --------- INSTALLING DEPENDENCIES ⏳ ----------- "
+    rm -rf "$ZSH"
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+
+    git clone https://github.com/romkatv/powerlevel10k.git \
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/themes/powerlevel10k
+
+    git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+
+    git clone https://github.com/zsh-users/zsh-autosuggestions \
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+
+    git clone https://github.com/zsh-users/zsh-completions \
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-completions
+
+    git clone https://github.com/zsh-users/zsh-history-substring-search \
+        ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-history-substring-search
+    git clone https://github.com/jimeh/tmux-themepack.git ~/.tmux-themepack
+
+    git clone https://github.com/VundleVim/Vundle.vim.git ~/.vim/bundle/Vundle.vim
+
+    git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
+    ~/.fzf/install --all
+
+    echo " --------- INSTALLED SUCCESSFULLY ✅ ----------- "
+    echo " --------- NOW RUN ./deploy.sh [OPTION] -------- "
+    # deploy.sh sets fetch.fsckObjects=true, and vim-scripts/indentpython.vim has a 2005 commit
+    # that fails fsck (badTimezone), so plain PluginInstall can't clone it
+    echo " Vim plugins: GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=fetch.fsck.badTimezone GIT_CONFIG_VALUE_0=ignore vim +PluginInstall +qall"
+fi

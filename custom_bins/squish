@@ -1,0 +1,1212 @@
+#!/usr/bin/env python3
+"""squish — compress dirs/files in place; verify before deleting originals.
+
+    squish <path>...              dir -> <dir>.tar.zst, file -> <file>.zst; verify; delete original
+    squish restore <archive>...   extract in place, verify, delete archive
+    squish ls <archive>           list contents
+    squish cat <archive> [member] stream one member (or the file) to stdout
+    squish log [-n N]             history of operations
+    squish scan <dir>             recommend what to squish (read-only triage)
+
+Safety invariant: originals are deleted only after the archive has been written,
+fsynced, verified against the live data, and renamed into place. Every failure
+path removes the .part temp file and leaves the original alone.
+
+Design: claude-workbench docs/superpowers/specs/2026-07-30-squish-design.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import bisect
+import dataclasses
+import difflib
+import json
+import os
+import random
+import re
+import shlex
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+DIR_SUFFIX = ".tar.zst"
+FILE_SUFFIX = ".zst"
+PART_SUFFIX = ".part"
+RECENT_MTIME_S = 60
+FREE_SPACE_FRACTION = 0.9  # refuse pack if tree > this fraction of free space
+PROBE_MIN_BYTES = 256 * 1024 * 1024  # sample-probe compressibility above this size
+PROBE_CHUNKS = 256
+PROBE_CHUNK_BYTES = 128 * 1024  # 256 × 128K = 32M sample budget
+# -9 --long=27 beat plain -19's ratio at 25x its speed on real data (2026-07-31
+# bench, crwarm tar: 17.1M @26MB/s vs 18.9M @1.0MB/s) — the 128M long-range
+# window matters far more than the level. 27 is also the decoder's default
+# window limit, so stock `tar -xaf` still opens archives flag-free.
+DEFAULT_LEVEL = 9
+ZSTD_LONG_WINDOW = "--long=27"
+DEFAULT_MIN_SAVINGS = 10.0
+# scan (advisory triage) defaults. Its probe budget is per candidate entry and
+# only has to separate compressible from hopeless, so it is far smaller than
+# the pack probe's 32M.
+SCAN_MIN_SIZE = 50 * 1024 * 1024
+SCAN_STALE_DAYS = 7.0
+SCAN_TOP = 15
+SCAN_PROBE_CHUNKS = 32  # × 128K = 4M sample per scanned entry
+VERBS = {"restore", "ls", "cat", "log", "scan"}
+# Verbs people reach for that don't exist. Without this map a guessed verb
+# falls through to pack mode and squish tries to COMPRESS the archive named
+# next to it (live incident 2026-08-11: `squish recover x.zst`).
+VERB_SYNONYMS = {
+    "unsquish": "restore", "recover": "restore", "unpack": "restore",
+    "extract": "restore", "decompress": "restore", "uncompress": "restore",
+    "untar": "restore", "unzip": "restore", "x": "restore",
+    "list": "ls", "history": "log", "show": "cat",
+    "recommend": "scan", "triage": "scan", "suggest": "scan",
+}
+TAR_CREATE_FLAGS = ["--xattrs", "--acls", "--sparse"]
+
+
+class SquishError(Exception):
+    """Expected operational failure — reported per path, exit code 1."""
+
+
+# ---------------------------------------------------------------- utilities
+
+
+def ensure_tools() -> None:
+    missing = [t for t in ("tar", "zstd", "cmp") if shutil.which(t) is None]
+    if missing:
+        sys.exit(f"squish: required tools missing: {', '.join(missing)}")
+
+
+UNSAFE_SUBPROCESS_ENV = ("TAR_OPTIONS", "ZSTD_CLEVEL", "ZSTD_NBTHREADS")
+
+
+def subprocess_env() -> dict[str, str]:
+    """GNU tar honors TAR_OPTIONS from the environment — TAR_OPTIONS=--remove-files
+    turns a pack into total loss (tar deletes sources, cleanup deletes the .part).
+    Strip it, and zstd's tuning vars, from every child."""
+    return {k: v for k, v in os.environ.items() if k not in UNSAFE_SUBPROCESS_ENV}
+
+
+def log_path() -> Path:
+    state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return Path(state) / "squish" / "log.jsonl"
+
+
+def append_log(record: dict[str, object]) -> None:
+    p = log_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"ts": datetime.now(UTC).isoformat(timespec="seconds"), **record}
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def append_log_best_effort(record: dict[str, object]) -> None:
+    """For records written AFTER the irreversible operation: the op succeeded, so
+    a failing log write must warn, not turn the exit code into a false failure."""
+    try:
+        append_log(record)
+    except OSError as err:
+        print(f"warning: could not write squish log: {err}", file=sys.stderr)
+
+
+def human(n: float) -> str:
+    for unit in ("B", "K", "M", "G"):
+        if abs(n) < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}T"
+
+
+def fmt_duration(seconds: float) -> str:
+    return f"{seconds:.0f}s" if seconds < 90 else f"{seconds / 60:.1f}m"
+
+
+BYTES_PER_STAT_BLOCK = 512  # st_blocks unit (POSIX)
+
+
+def disk_bytes(path: Path) -> int:
+    return path.lstat().st_blocks * BYTES_PER_STAT_BLOCK
+
+
+def _raise_walk_error(err: OSError) -> None:
+    raise SquishError(f"cannot scan {err.filename}: {err.strerror}") from err
+
+
+def scan_tree(root: Path) -> tuple[int, float]:
+    """(bytes-on-disk, newest mtime) over the whole tree; symlinks not followed.
+    Refuses nested mountpoints: tar would archive them but rmtree would then
+    empty the mounted device (same-fs bind mounts are not detectable this way)."""
+    st = root.lstat()
+    root_dev = st.st_dev
+    total, newest = st.st_blocks * BYTES_PER_STAT_BLOCK, st.st_mtime
+    seen_inodes: set[int] = set()  # hardlinked inodes count once (dirs can't hardlink)
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_raise_walk_error):
+        for is_file, name in [(False, n) for n in dirnames] + [(True, n) for n in filenames]:
+            entry = os.path.join(dirpath, name)
+            try:
+                st = os.lstat(entry)
+            except OSError as err:
+                raise SquishError(f"cannot scan {entry}: {err.strerror}") from err
+            if st.st_dev != root_dev:
+                raise SquishError(f"{entry} is on a different filesystem (nested mount)")
+            newest = max(newest, st.st_mtime)
+            if is_file and st.st_nlink > 1:
+                if st.st_ino in seen_inodes:
+                    continue
+                seen_inodes.add(st.st_ino)
+            total += st.st_blocks * BYTES_PER_STAT_BLOCK
+    return total, newest
+
+
+def archive_mode_for_tree(root: Path) -> int:
+    """Permission bits the archive of this tree should carry: the bitwise AND of every
+    regular member's mode (exec bits dropped), so an archive is never more readable than
+    its most private member — a 0600 `.env` inside must not end up in a 0644 `.tar.zst`.
+    Empty tree / no regular files → the usual 0644."""
+    mode = 0o666
+    saw_file = False
+    for dirpath, _dirnames, filenames in os.walk(root, onerror=_raise_walk_error):
+        for name in filenames:
+            try:
+                st = os.lstat(os.path.join(dirpath, name))
+            except OSError:
+                continue  # the pre-pack scan_tree already refused unreadable entries
+            if stat.S_ISREG(st.st_mode):
+                saw_file = True
+                mode &= stat.S_IMODE(st.st_mode)
+    return mode if saw_file else 0o644
+
+
+def fsync_path(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def truncate_output(text: str, max_lines: int = 20) -> str:
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    return "\n".join(lines[:max_lines]) + f"\n… ({len(lines) - max_lines} more lines)"
+
+
+def run_cmd(cmd: list[str], tty_stderr: bool = False) -> None:
+    """tty_stderr: let the child write straight to the terminal (zstd --progress);
+    error detail then appears there instead of in the SquishError."""
+    stderr = None if tty_stderr and sys.stderr.isatty() else subprocess.PIPE
+    proc = subprocess.run(
+        cmd, stdout=subprocess.DEVNULL, stderr=stderr, text=True, check=False,
+        env=subprocess_env(),
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() if proc.stderr else "(see terminal output)"
+        raise SquishError(f"{cmd[0]} failed (rc={proc.returncode}): {detail}")
+
+
+def run_pipeline(
+    producer: list[str], consumer: list[str], stdout: str = "devnull",
+    tty_stderr: str | None = None,
+) -> str | None:
+    """producer | consumer. stdout mode: "devnull", "stream" (inherit ours; SIGPIPE
+    from an early-exiting downstream reader like `| head` is not an error), or
+    "capture" (returned). stderr goes to temp files (no pipe-buffer deadlock:
+    tar --compare on a heavily-diverged tree can emit far more than a pipe holds).
+    tty_stderr="producer"/"consumer": that side writes straight to the terminal
+    instead (zstd --progress) when stderr is a tty."""
+    stdout_arg = {"devnull": subprocess.DEVNULL, "stream": None, "capture": subprocess.PIPE}
+    on_tty = sys.stderr.isatty()
+    with tempfile.TemporaryFile(mode="w+") as err_a, tempfile.TemporaryFile(mode="w+") as err_b:
+        env = subprocess_env()
+        proc_a = subprocess.Popen(
+            producer, stdout=subprocess.PIPE,
+            stderr=None if tty_stderr == "producer" and on_tty else err_a, env=env,
+        )
+        assert proc_a.stdout is not None
+        proc_b = subprocess.Popen(
+            consumer,
+            stdin=proc_a.stdout,
+            stdout=stdout_arg[stdout],
+            stderr=None if tty_stderr == "consumer" and on_tty else err_b,
+            env=env,
+        )
+        proc_a.stdout.close()  # so producer sees EPIPE if consumer dies
+        captured: str | None = None
+        try:
+            if stdout == "capture":
+                assert proc_b.stdout is not None
+                captured = proc_b.stdout.read().decode(errors="backslashreplace")
+            rc_b = proc_b.wait()
+            rc_a = proc_a.wait()
+        except BaseException:
+            proc_b.kill()
+            proc_a.kill()
+            raise
+        if rc_a != 0 or rc_b != 0:
+            if stdout == "stream" and {rc_a, rc_b} <= {0, -signal.SIGPIPE}:
+                return None  # downstream consumer closed our stdout — not an error
+            err_a.seek(0)
+            err_b.seek(0)
+            detail = "\n".join(filter(None, [err_a.read().strip(), err_b.read().strip()]))
+            raise SquishError(
+                f"`{producer[0]} | {' '.join(consumer[:2])}` failed "
+                f"(rc={rc_a},{rc_b}):\n{truncate_output(detail)}"
+            )
+        return captured
+
+
+def zstd_progress_flags() -> list[str]:
+    """zstd's own progress counter, only when a human is watching (-q hides it)."""
+    return ["--progress"] if sys.stderr.isatty() else []
+
+
+def zstd_compress_args(level: int) -> list[str]:
+    args = ["zstd", "-q", f"-{level}", "-T0", ZSTD_LONG_WINDOW]
+    if level > 19:
+        args.append("--ultra")
+    return args
+
+
+# ---------------------------------------------------------------- verification
+
+
+def verify_dir_archive(parent: Path, part: Path) -> None:
+    """tar --compare the archive against the live tree; any diff raises."""
+    run_pipeline(
+        ["zstd", "-dc", *zstd_progress_flags(), str(part)],
+        ["tar", "-C", str(parent), "--compare", "--xattrs", "--acls", "-f", "-"],
+        tty_stderr="producer",
+    )
+
+
+def verify_file_archive(part: Path, src: Path) -> None:
+    """Byte-compare decompressed archive against the original file."""
+    run_pipeline(["zstd", "-dc", str(part)], ["cmp", "-s", "-", str(src)])
+
+
+def archive_members(part: Path) -> set[str]:
+    """Paths stored in the archive, normalized (no ./ prefix, no trailing /)."""
+    listing = run_pipeline(["zstd", "-dc", str(part)], ["tar", "-tf", "-"], stdout="capture")
+    members = set()
+    for line in (listing or "").splitlines():
+        norm = line.removeprefix("./").rstrip("/")
+        if norm:
+            members.add(norm)
+    return members
+
+
+def tree_members(root: Path) -> set[str]:
+    """Paths under root as tar would store them (root.name/...)."""
+    members = {root.name}
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_raise_walk_error):
+        rel = os.path.relpath(dirpath, root.parent)
+        for name in dirnames + filenames:
+            members.add(os.path.join(rel, name))
+    return members
+
+
+def check_no_new_paths(path: Path, part: Path) -> None:
+    """tar --compare can't see files ADDED after archiving — anything on disk
+    but not in the archive would be silently rmtree'd with the original. Refuse."""
+    extra = sorted(tree_members(path) - archive_members(part))
+    if extra:
+        preview = ", ".join(extra[:5]) + ("…" if len(extra) > 5 else "")
+        raise SquishError(
+            f"{len(extra)} path(s) on disk are missing from the archive — appeared "
+            f"during packing, or tar cannot store them (sockets, control-char names): "
+            f"{preview} — original kept"
+        )
+
+
+def rename_noclobber(src: Path, dest: Path) -> None:
+    """link+unlink instead of rename(): rename silently clobbers a dest that
+    appeared since our existence check; link fails with EEXIST instead."""
+    try:
+        os.link(src, dest)
+    except FileExistsError:
+        raise SquishError(f"{dest} appeared while we worked — not overwriting it") from None
+    except OSError as err:  # e.g. EPERM on no-hardlink filesystems (FAT USB)
+        raise SquishError(f"cannot hardlink {src.name} → {dest.name}: {err.strerror}") from err
+    src.unlink()
+
+
+def claim_part(part: Path) -> None:
+    """Atomically claim the temp file (O_EXCL) so the finally-cleanup can never
+    delete a foreign file and zstd -f can never clobber one."""
+    try:
+        fd = os.open(part, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        raise SquishError(
+            f"{part} exists — leftover from a previous run? remove it first"
+        ) from None
+    os.close(fd)
+
+
+# ---------------------------------------------------------------- probe
+
+
+def probe_savings(sample: bytes) -> float | None:
+    """Estimated savings %% from compressing a sample at -3, or None if the probe
+    machinery fails (fail open — the min-savings gate still guards the full pack)."""
+    if not sample:
+        return None
+    try:
+        proc = subprocess.run(
+            ["zstd", "-3", "-q", "-c"], input=sample, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, check=False, env=subprocess_env(),
+        )
+    except OSError as err:
+        print(f"warning: compressibility probe failed: {err}", file=sys.stderr)
+        return None
+    if proc.returncode != 0:
+        return None
+    return 100.0 * (1.0 - len(proc.stdout) / len(sample))
+
+
+def probe_collect_files(root: Path) -> list[tuple[Path, int]]:
+    """Regular files + sizes for probe sampling. The probe is advisory, so
+    unreadable entries are skipped here (the pack itself will fail loudly)."""
+    out: list[tuple[Path, int]] = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            entry = Path(dirpath) / name
+            try:
+                st = entry.lstat()
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode) and st.st_size > 0:
+                out.append((entry, st.st_size))
+    return out
+
+
+def probe_random_sample(files: list[tuple[Path, int]], n_chunks: int = PROBE_CHUNKS) -> bytes:
+    """128K chunks from random non-overlapping slots over the total bytes — an
+    unbiased estimate of byte-weighted compressibility. A head-of-stream sample
+    is order-biased (one big incompressible file sorting first would condemn a
+    mostly-compressible tree); overlapping chunks would let zstd dedupe the
+    overlap and inflate the estimate."""
+    total = sum(size for _, size in files)
+    if total == 0:
+        return b""
+    cumulative: list[int] = []
+    acc = 0
+    for _, size in files:
+        acc += size
+        cumulative.append(acc)
+    n_slots = (total + PROBE_CHUNK_BYTES - 1) // PROBE_CHUNK_BYTES
+    rng = random.Random()
+    slots = sorted(rng.sample(range(n_slots), min(n_chunks, n_slots)))
+    parts: list[bytes] = []
+    for slot in slots:
+        offset = slot * PROBE_CHUNK_BYTES
+        idx = bisect.bisect_right(cumulative, offset)
+        path, size = files[idx]
+        try:
+            with open(path, "rb") as f:
+                f.seek(offset - (cumulative[idx] - size))
+                parts.append(f.read(PROBE_CHUNK_BYTES))  # short at file EOF is fine
+        except OSError:
+            continue
+    return b"".join(parts)
+
+
+def check_probe(sample: bytes, min_savings: float) -> None:
+    """Refuse in seconds what level 19 would grind on for minutes and then discard
+    anyway. The -3 sample underestimates -19, hence the /2 margin — only clearly
+    hopeless data (encrypted, media) is refused."""
+    est = probe_savings(sample)
+    if est is not None and est < min_savings / 2:
+        raise SquishError(
+            f"compressibility probe: a random {human(len(sample))} sample compresses "
+            f"only {est:.1f}% — hopeless against --min-savings {min_savings:.0f}% "
+            "(encrypted or already-compressed data? --force to pack anyway)"
+        )
+
+
+# ---------------------------------------------------------------- scan
+
+
+@dataclasses.dataclass
+class ScanEntry:
+    """One top-level entry of a scanned directory."""
+
+    name: str
+    bytes_on_disk: int
+    quiesced_days: float  # since the newest mtime anywhere in the entry
+    probe_files: list[tuple[Path, int]]
+    issues: list[str]
+    est_savings: float | None = None
+
+    @property
+    def est_freed(self) -> float:
+        return self.bytes_on_disk * max(self.est_savings or 0.0, 0.0) / 100.0
+
+
+def parse_size(text: str) -> int:
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([kKmMgGtT]?)[bB]?", text.strip())
+    if not m:
+        raise argparse.ArgumentTypeError(f"cannot parse size {text!r} (try 200M, 2G)")
+    units = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+    return int(float(m.group(1)) * units[m.group(2).lower()])
+
+
+def _lstat_or_none(entry: str, note) -> os.stat_result | None:
+    try:
+        return os.lstat(entry)
+    except OSError:
+        note("unreadable subpaths")
+        return None
+
+
+def _survey_entry(path: Path) -> tuple[int, float, list[tuple[Path, int]], list[str]]:
+    """Advisory cousin of scan_tree: conditions that would make a pack refuse
+    (nested mounts, sockets, unreadable subtrees, …) come back as issue strings
+    instead of raising, so one bad entry can't abort a whole scan. Returns
+    (bytes-on-disk, newest mtime, regular files for probing, issues). Hardlinks
+    dedup within this entry only — a file hardlinked across two top-level
+    entries counts toward both (advisory; packing one frees nothing)."""
+    issues: list[str] = []
+
+    def note(issue: str) -> None:
+        if issue not in issues:
+            issues.append(issue)
+
+    if "\n" in path.name:
+        note("newline in name")
+    st = path.lstat()
+    if stat.S_ISREG(st.st_mode):
+        if path.name.endswith(".tar"):
+            note(".tar file")
+        if path.name.endswith(PART_SUFFIX):
+            note("leftover .part from an interrupted pack")
+        if st.st_nlink > 1:
+            note("hardlinked")
+        try:
+            if os.listxattr(path, follow_symlinks=False):
+                note("xattrs")
+        except OSError:
+            pass
+        files = [(path, st.st_size)] if st.st_size > 0 else []
+        return st.st_blocks * BYTES_PER_STAT_BLOCK, st.st_mtime, files, issues
+
+    root_dev = st.st_dev
+    total, newest = st.st_blocks * BYTES_PER_STAT_BLOCK, st.st_mtime
+    files: list[tuple[Path, int]] = []
+    seen_inodes: set[int] = set()
+    for dirpath, dirnames, filenames in os.walk(
+        path, onerror=lambda err: note("unreadable subpaths")
+    ):
+        descend: list[str] = []
+        for name in dirnames:
+            if "\n" in name:
+                note("newline in name")
+            st_d = _lstat_or_none(os.path.join(dirpath, name), note)
+            if st_d is None:
+                continue
+            if st_d.st_dev != root_dev:
+                note("nested mountpoint")
+                continue  # and don't walk into the mounted device
+            descend.append(name)
+            newest = max(newest, st_d.st_mtime)
+            total += st_d.st_blocks * BYTES_PER_STAT_BLOCK
+        dirnames[:] = descend
+        for name in filenames:
+            if "\n" in name:
+                note("newline in name")
+            st_f = _lstat_or_none(os.path.join(dirpath, name), note)
+            if st_f is None:
+                continue
+            if st_f.st_dev != root_dev:  # single-file bind mount
+                note("nested mountpoint")
+                continue
+            if stat.S_ISSOCK(st_f.st_mode):
+                note("socket in tree")
+            newest = max(newest, st_f.st_mtime)
+            if st_f.st_nlink > 1:  # hardlinked inodes count once (as in scan_tree)
+                if st_f.st_ino in seen_inodes:
+                    continue
+                seen_inodes.add(st_f.st_ino)
+            total += st_f.st_blocks * BYTES_PER_STAT_BLOCK
+            if stat.S_ISREG(st_f.st_mode) and st_f.st_size > 0:
+                files.append((Path(dirpath) / name, st_f.st_size))
+    return total, newest, files, issues
+
+
+def cmd_scan(raw: str, *, min_size: int, stale_days: float, top: int,
+             min_savings: float) -> None:
+    """Read-only triage: rank a directory's top-level entries by estimated bytes
+    a pack would free (size × probed savings), gated on quiescence (newest mtime
+    — atime is untrustworthy under agent/content-search sweeps)."""
+    target = Path(os.path.abspath(raw))
+    if not target.is_dir() or os.path.islink(os.path.normpath(raw)):
+        raise SquishError("scan wants a real directory to triage")
+    try:
+        with os.scandir(target) as it:
+            listing = sorted(it, key=lambda e: e.name)
+    except OSError as err:
+        raise SquishError(f"cannot list: {err.strerror}") from err
+
+    now = time.time()
+    total_bytes = 0
+    symlinks = other = archives_n = archives_bytes = small_n = small_bytes = 0
+    active: list[ScanEntry] = []
+    blocked: list[ScanEntry] = []
+    candidates: list[ScanEntry] = []
+    for de in listing:
+        try:
+            st = de.stat(follow_symlinks=False)
+        except OSError:
+            other += 1
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            symlinks += 1
+            continue
+        if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+            other += 1
+            continue
+        if stat.S_ISREG(st.st_mode) and de.name.endswith(FILE_SUFFIX):  # incl. .tar.zst
+            archives_n += 1
+            archives_bytes += st.st_blocks * BYTES_PER_STAT_BLOCK
+            total_bytes += st.st_blocks * BYTES_PER_STAT_BLOCK
+            continue
+        try:
+            nbytes, newest, files, issues = _survey_entry(target / de.name)
+        except OSError:  # vanished between scandir and the survey
+            other += 1
+            continue
+        total_bytes += nbytes
+        entry = ScanEntry(de.name, nbytes, (now - newest) / 86400.0, files, issues)
+        suffix = DIR_SUFFIX if stat.S_ISDIR(st.st_mode) else FILE_SUFFIX
+        if os.path.lexists(target / (de.name + suffix)):
+            entry.issues.insert(0, f"{de.name}{suffix} already exists")
+        if "unreadable subpaths" in entry.issues:
+            # size and newest-mtime are lower bounds only — never let a
+            # half-measured tree pass the small or active gates
+            blocked.append(entry)
+        elif nbytes < min_size:
+            small_n += 1
+            small_bytes += nbytes
+        elif entry.quiesced_days < stale_days:
+            active.append(entry)
+        elif entry.issues:
+            blocked.append(entry)
+        else:
+            candidates.append(entry)
+
+    if sys.stderr.isatty() and candidates:
+        print(f"→ probing {len(candidates)} candidates for compressibility…", file=sys.stderr)
+    for entry in candidates:
+        sample = probe_random_sample(entry.probe_files, n_chunks=SCAN_PROBE_CHUNKS)
+        entry.est_savings = probe_savings(sample)
+
+    hopeless_cut = min_savings / 2  # the pack probe's refusal rule
+    recs = [e for e in candidates if e.est_savings is None or e.est_savings >= hopeless_cut]
+    offload = [e for e in candidates if e.est_savings is not None and e.est_savings < hopeless_cut]
+    recs.sort(key=lambda e: e.est_freed, reverse=True)
+    offload.sort(key=lambda e: e.bytes_on_disk, reverse=True)
+
+    print(f"{target}: {len(listing)} top-level entries, {human(total_bytes)} on disk")
+    shown = recs[:top]
+    if shown:
+        est_total = sum(e.est_freed for e in shown)
+        print(f"\nworth squishing — est. ≥{human(est_total)} freed "
+              "(probe is a floor; --long=27 usually does better):")
+        print(f"{'est.freed':>9} {'size':>7} {'probe':>6} {'quiesced':>8}  entry")
+        for e in shown:
+            freed = "?" if e.est_savings is None else f"~{human(e.est_freed)}"
+            probe = "?" if e.est_savings is None else f"≥{e.est_savings:.0f}%"
+            print(f"{freed:>9} {human(e.bytes_on_disk):>7} {probe:>6} "
+                  f"{e.quiesced_days:>7.0f}d  {e.name}")
+        if len(recs) > top:
+            print(f"  … and {len(recs) - top} more (--top {len(recs)} to see all)")
+    else:
+        print("\nnothing worth squishing at these thresholds "
+              f"(--min-size {human(min_size)}, --stale-days {stale_days:g})")
+    if offload:
+        print("\ncold but incompressible — squish can't help; `sb archive push` frees 100%:")
+        for e in offload[:top]:
+            print(f"{human(e.bytes_on_disk):>9}  {e.est_savings:.1f}% probe, "
+                  f"quiet {e.quiesced_days:.0f}d  {e.name}")
+    if blocked:
+        print("\nsquish would refuse these:")
+        for e in blocked:
+            approx = "≥" if "unreadable subpaths" in e.issues else ""
+            print(f"  {e.name} ({approx}{human(e.bytes_on_disk)}) — {'; '.join(e.issues[:3])}")
+    skipped = []
+    if active:
+        skipped.append(f"{len(active)} active <{stale_days:g}d "
+                       f"({human(sum(e.bytes_on_disk for e in active))})")
+    if small_n:
+        skipped.append(f"{small_n} under {human(min_size)} ({human(small_bytes)})")
+    if archives_n:
+        skipped.append(f"{archives_n} already archives ({human(archives_bytes)})")
+    if symlinks:
+        skipped.append(f"{symlinks} symlinks")
+    if other:
+        skipped.append(f"{other} other")
+    if skipped:
+        print("\nskipped: " + " · ".join(skipped))
+    if shown:
+        base = os.path.normpath(raw)  # "" → ".", "d///" → "d" — never invent a root path
+        print("\n→ squish " + " ".join(shlex.quote(os.path.join(base, e.name)) for e in shown))
+    append_log_best_effort({
+        "action": "scan", "src": str(target), "entries": len(listing),
+        "recommended": len(recs), "offload": len(offload),
+        "est_freed_bytes": int(sum(e.est_freed for e in recs)),
+    })
+
+
+# ---------------------------------------------------------------- pack
+
+
+def check_common_guards(
+    path: Path, orig_bytes: int, newest_mtime: float, force: bool
+) -> None:
+    if orig_bytes == 0:
+        raise SquishError("occupies 0 bytes on disk — nothing to reclaim")
+    age = time.time() - newest_mtime
+    if not force and age < RECENT_MTIME_S:
+        raise SquishError(
+            f"modified {age:.0f}s ago — may be in active use (--force to pack anyway)"
+        )
+    free = shutil.disk_usage(path.parent).free
+    if not force and orig_bytes > FREE_SPACE_FRACTION * free:
+        raise SquishError(
+            f"uses {human(orig_bytes)} on disk but only {human(free)} free — "
+            "worst-case archive may not fit (--force to try anyway)"
+        )
+
+
+def check_dest_free(dest: Path) -> None:
+    # lexists: a dangling symlink at the destination must refuse too
+    if os.path.lexists(dest):
+        raise SquishError(f"{dest} already exists")
+
+
+def report_pack(src: Path, dest: Path, orig: int, comp: int, savings: float,
+                elapsed: float, kept: bool) -> None:
+    suffix = ", original kept" if kept else ""
+    print(
+        f"✓ {src.name} → {dest.name}  {human(orig)} → {human(comp)} on disk "
+        f"({savings:.0f}% saved, {fmt_duration(elapsed)}{suffix})"
+    )
+
+
+def _rm_readonly_onexc(func, failed: str, err: BaseException) -> None:
+    """rmtree hook: unlink/rmdir inside a non-writable dir fails EACCES
+    (agent-written dr-xr-xr-x run dirs, go/uv caches). The tree is verified
+    and doomed at this point, so grant the parent u+wx and retry the one op;
+    anything else re-raises."""
+    if not (isinstance(err, PermissionError) and func in (os.unlink, os.rmdir)):
+        raise err
+    parent = os.path.dirname(failed)
+    os.chmod(parent, stat.S_IMODE(os.lstat(parent).st_mode) | 0o300)
+    func(failed)
+
+
+def pack_dir(path: Path, *, level: int, min_savings: float, keep: bool, force: bool) -> None:
+    parent = path.parent
+    dest = parent / (path.name + DIR_SUFFIX)
+    part = parent / (path.name + DIR_SUFFIX + PART_SUFFIX)
+    check_dest_free(dest)
+    orig_bytes, newest = scan_tree(path)
+    check_common_guards(path, orig_bytes, newest, force)
+    # ./ prefix keeps a leading-dash name from parsing as a tar option
+    member = path.name if not path.name.startswith("-") else f"./{path.name}"
+    if not force and orig_bytes >= PROBE_MIN_BYTES:
+        check_probe(probe_random_sample(probe_collect_files(path)), min_savings)
+
+    t0 = time.monotonic()
+    renamed = False
+    claim_part(part)
+    if sys.stderr.isatty():  # denominator for zstd's "Read : X" progress counter
+        print(f"→ {path.name}: packing {human(orig_bytes)} at level {level}", file=sys.stderr)
+    try:
+        run_pipeline(
+            ["tar", "-C", str(parent), *TAR_CREATE_FLAGS, "-cf", "-", member],
+            [*zstd_compress_args(level), *zstd_progress_flags(), "-f", "-o", str(part)],
+            tty_stderr="consumer",
+        )
+        fsync_path(part)  # before measuring: delayed allocation underreports st_blocks
+        comp_bytes = disk_bytes(part)
+        savings = 100.0 * (1.0 - comp_bytes / orig_bytes)
+        if savings < min_savings:
+            # before verify: discarding deletes nothing, so it needs no verification
+            append_log({
+                "action": "skip_low_savings", "src": str(path),
+                "orig_bytes": orig_bytes, "comp_bytes": comp_bytes,
+                "savings_pct": round(savings, 1),
+                "duration_s": round(time.monotonic() - t0, 1), "level": level,
+            })
+            raise SquishError(
+                f"only {savings:.1f}% savings (< {min_savings:.0f}%) — "
+                "keeping original, archive discarded"
+            )
+        verify_dir_archive(parent, part)
+        check_no_new_paths(path, part)
+        # tar --compare misses writes landing after its pass reaches a member;
+        # any size- or mtime-moving write since the pre-pack scan aborts here
+        if scan_tree(path) != (orig_bytes, newest):
+            raise SquishError(
+                "tree changed during packing — original kept, archive discarded"
+            )
+        # never more readable than the most private member (link() keeps the mode)
+        os.chmod(part, archive_mode_for_tree(path))
+        rename_noclobber(part, dest)
+        renamed = True
+    finally:
+        if not renamed:
+            part.unlink(missing_ok=True)
+
+    fsync_path(parent)
+    if not keep:
+        # last-instant recheck: verify ran on the live tree, but writes can land
+        # between the post-verify rescan and here
+        if scan_tree(path) != (orig_bytes, newest):
+            raise SquishError(
+                f"tree changed after verification — archive kept at {dest.name}, "
+                "original NOT deleted"
+            )
+        try:
+            shutil.rmtree(path, onexc=_rm_readonly_onexc)  # the one deletion site for original dirs
+        except OSError as err:
+            raise SquishError(
+                f"archive verified and kept at {dest.name}, but deleting the "
+                f"original failed partway ({err}) — every file is preserved in "
+                f"the archive; remove the leftover {path.name}/ manually"
+            ) from err
+    elapsed = time.monotonic() - t0
+    append_log_best_effort({
+        "action": "pack", "src": str(path), "dest": str(dest),
+        "orig_bytes": orig_bytes, "comp_bytes": comp_bytes,
+        "savings_pct": round(savings, 1), "duration_s": round(elapsed, 1),
+        "level": level, "kept": keep,
+    })
+    report_pack(path, dest, orig_bytes, comp_bytes, savings, elapsed, keep)
+
+
+def pack_file(path: Path, *, level: int, min_savings: float, keep: bool, force: bool) -> None:
+    if path.name.endswith(".tar"):
+        raise SquishError(
+            "a .tar file would pack to an ambiguous .tar.zst — restore would unpack "
+            "its contents instead of recreating the file. Rename it, or restore the "
+            "directory it was made from and pack that"
+        )
+    if not force and path.name.endswith(FILE_SUFFIX):
+        raise SquishError(
+            "already a zstd archive — did you mean `squish restore`? "
+            "(--force to re-pack it anyway)"
+        )
+    dest = path.with_name(path.name + FILE_SUFFIX)
+    part = path.with_name(path.name + FILE_SUFFIX + PART_SUFFIX)
+    check_dest_free(dest)
+    st = path.lstat()
+    check_common_guards(path, st.st_blocks * BYTES_PER_STAT_BLOCK, st.st_mtime, force)
+    orig_bytes = st.st_blocks * BYTES_PER_STAT_BLOCK
+    if not force and orig_bytes >= PROBE_MIN_BYTES:
+        check_probe(probe_random_sample([(path, st.st_size)]), min_savings)
+    if not force:
+        # a bare .zst stores content only — these would be silently discarded
+        if st.st_nlink > 1:
+            raise SquishError(
+                f"has {st.st_nlink} hardlinks — packing breaks the link identity "
+                "(--force to pack anyway)"
+            )
+        xattrs = os.listxattr(path, follow_symlinks=False)
+        if xattrs:
+            names = ", ".join(xattrs[:3]) + ("…" if len(xattrs) > 3 else "")
+            raise SquishError(
+                f"has xattrs ({names}) that a bare .zst cannot store "
+                "(--force to discard them)"
+            )
+
+    t0 = time.monotonic()
+    renamed = False
+    claim_part(part)
+    try:
+        run_cmd(
+            [*zstd_compress_args(level), *zstd_progress_flags(), "-f", "-o", str(part), str(path)],
+            tty_stderr=True,
+        )
+        fsync_path(part)  # before measuring: delayed allocation underreports st_blocks
+        comp_bytes = disk_bytes(part)
+        savings = 100.0 * (1.0 - comp_bytes / orig_bytes)
+        if savings < min_savings:
+            # before verify: discarding deletes nothing, so it needs no verification
+            append_log({
+                "action": "skip_low_savings", "src": str(path),
+                "orig_bytes": orig_bytes, "comp_bytes": comp_bytes,
+                "savings_pct": round(savings, 1),
+                "duration_s": round(time.monotonic() - t0, 1), "level": level,
+            })
+            raise SquishError(
+                f"only {savings:.1f}% savings (< {min_savings:.0f}%) — "
+                "keeping original, archive discarded"
+            )
+        verify_file_archive(part, path)
+        st2 = path.lstat()
+        if (st2.st_ino, st2.st_size, st2.st_mtime_ns) != (st.st_ino, st.st_size, st.st_mtime_ns):
+            raise SquishError(
+                "file changed during packing — original kept, archive discarded"
+            )
+        os.utime(part, (st.st_atime, st.st_mtime))  # zstd frames don't store mtime
+        os.chmod(part, stat.S_IMODE(st.st_mode) & 0o666)  # a 0600 file packs to a 0600 .zst
+        rename_noclobber(part, dest)
+        renamed = True
+    finally:
+        if not renamed:
+            part.unlink(missing_ok=True)
+
+    fsync_path(path.parent)
+    if not keep:
+        st3 = path.lstat()
+        if (st3.st_ino, st3.st_size, st3.st_mtime_ns) != (st.st_ino, st.st_size, st.st_mtime_ns):
+            raise SquishError(
+                f"file changed after verification — archive kept at {dest.name}, "
+                "original NOT deleted"
+            )
+        path.unlink()  # the one deletion site for original files
+    elapsed = time.monotonic() - t0
+    append_log_best_effort({
+        "action": "pack", "src": str(path), "dest": str(dest),
+        "orig_bytes": orig_bytes, "comp_bytes": comp_bytes,
+        "savings_pct": round(savings, 1), "duration_s": round(elapsed, 1),
+        "level": level, "kept": keep,
+    })
+    report_pack(path, dest, orig_bytes, comp_bytes, savings, elapsed, keep)
+
+
+def pack_path(raw: str, *, level: int, min_savings: float, keep: bool, force: bool) -> None:
+    norm = os.path.normpath(raw)
+    if os.path.islink(norm):
+        raise SquishError("is a symlink — pack the target explicitly instead")
+    path = Path(os.path.abspath(norm))
+    if not path.name or path == path.parent:
+        raise SquishError("refusing to pack a filesystem root")
+    if not os.path.lexists(path):
+        raise SquishError("does not exist")
+    if os.path.ismount(path):
+        raise SquishError("is a mountpoint")
+    if path.is_dir():
+        pack_dir(path, level=level, min_savings=min_savings, keep=keep, force=force)
+    elif path.is_file():
+        pack_file(path, level=level, min_savings=min_savings, keep=keep, force=force)
+    else:
+        raise SquishError("is neither a regular file nor a directory")
+
+
+# ---------------------------------------------------------------- restore
+
+
+def restore_dir(arch: Path, *, keep: bool) -> None:
+    parent = arch.parent
+    stem = arch.name[: -len(DIR_SUFFIX)]
+    if not stem:
+        raise SquishError("archive filename leaves an empty restore target name")
+    target = parent / stem
+    if os.path.lexists(target):
+        raise SquishError(f"{target} already exists")
+    ref = arch.lstat()  # so the final unlink can refuse if the archive was swapped
+
+    t0 = time.monotonic()
+    tmpd = Path(tempfile.mkdtemp(dir=parent, prefix=f".{target.name}.restore."))
+    try:
+        run_pipeline(
+            ["zstd", "-dc", *zstd_progress_flags(), str(arch)],
+            ["tar", "-C", str(tmpd), "-xpf", "-", "--xattrs", "--acls"],
+            tty_stderr="producer",
+        )
+        run_pipeline(
+            ["zstd", "-dc", *zstd_progress_flags(), str(arch)],
+            ["tar", "-C", str(tmpd), "--compare", "--xattrs", "--acls", "-f", "-"],
+            tty_stderr="producer",
+        )
+        entries = list(tmpd.iterdir())
+        if [e.name for e in entries] != [target.name]:
+            names = ", ".join(e.name for e in entries) or "(empty)"
+            raise SquishError(
+                f"archive top level is [{names}], expected exactly '{target.name}' — "
+                "not a squish-made archive?"
+            )
+        entries[0].rename(target)
+    finally:
+        # best-effort scratch cleanup; must not shadow the real error
+        shutil.rmtree(tmpd, ignore_errors=True)
+
+    fsync_path(parent)
+    comp_bytes = disk_bytes(arch)
+    orig_bytes, _ = scan_tree(target)
+    if not keep:
+        cur = arch.lstat()
+        if (cur.st_ino, cur.st_size, cur.st_mtime_ns) != (ref.st_ino, ref.st_size, ref.st_mtime_ns):
+            raise SquishError(
+                f"{arch.name} changed during restore — restored tree is in place, "
+                "archive NOT deleted"
+            )
+        os.sync()  # extracted data must be on disk before the only other copy goes away
+        arch.unlink()  # the one deletion site for archives (dirs)
+    elapsed = time.monotonic() - t0
+    append_log_best_effort({
+        "action": "restore", "src": str(arch), "dest": str(target),
+        "orig_bytes": orig_bytes, "comp_bytes": comp_bytes,
+        "duration_s": round(elapsed, 1), "kept": keep,
+    })
+    print(f"✓ {arch.name} → {target.name}/  ({human(orig_bytes)} restored, {fmt_duration(elapsed)})")
+
+
+def restore_file(arch: Path, *, keep: bool) -> None:
+    stem = arch.name[: -len(FILE_SUFFIX)]
+    if not stem:
+        raise SquishError("archive filename leaves an empty restore target name")
+    target = arch.with_name(stem)
+    if os.path.lexists(target):
+        raise SquishError(f"{target} already exists")
+    tmpf = arch.with_name(f".{target.name}.restore{PART_SUFFIX}")
+    # lstat before zstd reads the archive (relatime would bump atime), and as the
+    # reference for the swap check before the final unlink
+    ast = arch.lstat()
+
+    t0 = time.monotonic()
+    done = False
+    claim_part(tmpf)
+    try:
+        # zstd verifies the xxh64 frame checksum during decompression
+        run_cmd(
+            ["zstd", "-q", "-d", *zstd_progress_flags(), "-f", "-o", str(tmpf), str(arch)],
+            tty_stderr=True,
+        )
+        os.utime(tmpf, (ast.st_atime, ast.st_mtime))  # mtime carried via the archive file
+        fsync_path(tmpf)
+        rename_noclobber(tmpf, target)
+        done = True
+    finally:
+        if not done:
+            tmpf.unlink(missing_ok=True)
+
+    fsync_path(arch.parent)
+    comp_bytes = disk_bytes(arch)
+    orig_bytes = disk_bytes(target)
+    if not keep:
+        cur = arch.lstat()
+        if (cur.st_ino, cur.st_size, cur.st_mtime_ns) != (ast.st_ino, ast.st_size, ast.st_mtime_ns):
+            raise SquishError(
+                f"{arch.name} changed during restore — restored file is in place, "
+                "archive NOT deleted"
+            )
+        arch.unlink()  # the one deletion site for archives (files)
+    elapsed = time.monotonic() - t0
+    append_log_best_effort({
+        "action": "restore", "src": str(arch), "dest": str(target),
+        "orig_bytes": orig_bytes, "comp_bytes": comp_bytes,
+        "duration_s": round(elapsed, 1), "kept": keep,
+    })
+    print(f"✓ {arch.name} → {target.name}  ({human(orig_bytes)} restored, {fmt_duration(elapsed)})")
+
+
+def restore_archive(raw: str, *, keep: bool) -> None:
+    arch = Path(os.path.abspath(raw))
+    if not arch.is_file():
+        raise SquishError("does not exist or is not a file")
+    if arch.name.endswith(DIR_SUFFIX):
+        restore_dir(arch, keep=keep)
+    elif arch.name.endswith(FILE_SUFFIX):
+        restore_file(arch, keep=keep)
+    else:
+        raise SquishError(f"expected a {DIR_SUFFIX} or {FILE_SUFFIX} archive")
+
+
+# ---------------------------------------------------------------- peek + log
+
+
+def cmd_ls(raw: str) -> None:
+    arch = Path(os.path.abspath(raw))
+    if not arch.is_file():
+        raise SquishError("does not exist or is not a file")
+    if arch.name.endswith(DIR_SUFFIX):
+        run_pipeline(["zstd", "-dc", str(arch)], ["tar", "-tvf", "-"], stdout="stream")
+    else:
+        proc = subprocess.run(
+            ["zstd", "-l", str(arch)], stderr=subprocess.PIPE, text=True, check=False,
+            env=subprocess_env(),
+        )
+        if proc.returncode != 0:
+            raise SquishError(f"zstd -l failed: {proc.stderr.strip()}")
+
+
+def cmd_cat(raw: str, member: str | None) -> None:
+    arch = Path(os.path.abspath(raw))
+    if not arch.is_file():
+        raise SquishError("does not exist or is not a file")
+    if arch.name.endswith(DIR_SUFFIX):
+        if member is None:
+            raise SquishError(f"a member path is required for {DIR_SUFFIX} archives (see squish ls)")
+        # "--" so a member arg can never parse as a tar option
+        run_pipeline(
+            ["zstd", "-dc", str(arch)], ["tar", "-xOf", "-", "--", member], stdout="stream"
+        )
+    else:
+        proc = subprocess.run(
+            ["zstd", "-dc", str(arch)], stderr=subprocess.PIPE, text=True, check=False,
+            env=subprocess_env(),
+        )
+        if proc.returncode not in (0, -signal.SIGPIPE):
+            raise SquishError(f"zstd failed: {proc.stderr.strip()}")
+
+
+def cmd_log(count: int) -> None:
+    p = log_path()
+    if not p.exists():
+        print("no squish history")
+        return
+    entries = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
+    for e in entries[-count:]:
+        sizes = ""
+        if "orig_bytes" in e and "comp_bytes" in e:
+            sizes = f"  {human(e['orig_bytes'])} → {human(e['comp_bytes'])}"
+            if "savings_pct" in e:
+                sizes += f" ({e['savings_pct']:.0f}% saved)"
+        dest = f" → {e['dest']}" if "dest" in e else ""
+        print(f"{e['ts']}  {e['action']:<17} {e['src']}{dest}{sizes}")
+
+
+# ---------------------------------------------------------------- CLI
+
+
+def main(argv: list[str]) -> int:
+    ensure_tools()
+
+    if argv and argv[0] in VERBS:
+        verb, rest = argv[0], argv[1:]
+        if verb == "restore":
+            ap = argparse.ArgumentParser(prog="squish restore")
+            ap.add_argument("archives", nargs="+")
+            ap.add_argument("--keep", action="store_true", help="keep the archive after restoring")
+            ns = ap.parse_args(rest)
+            failures = 0
+            for raw in ns.archives:
+                try:
+                    restore_archive(raw, keep=ns.keep)
+                except SquishError as err:
+                    print(f"✗ {raw}: {err}", file=sys.stderr)
+                    failures += 1
+            return 1 if failures else 0
+        if verb == "ls":
+            ap = argparse.ArgumentParser(prog="squish ls")
+            ap.add_argument("archive")
+            ns = ap.parse_args(rest)
+            try:
+                cmd_ls(ns.archive)
+            except SquishError as err:
+                print(f"✗ {ns.archive}: {err}", file=sys.stderr)
+                return 1
+            return 0
+        if verb == "cat":
+            ap = argparse.ArgumentParser(prog="squish cat")
+            ap.add_argument("archive")
+            ap.add_argument("member", nargs="?")
+            ns = ap.parse_args(rest)
+            try:
+                cmd_cat(ns.archive, ns.member)
+            except SquishError as err:
+                print(f"✗ {ns.archive}: {err}", file=sys.stderr)
+                return 1
+            return 0
+        if verb == "scan":
+            ap = argparse.ArgumentParser(prog="squish scan")
+            ap.add_argument("dir", help="directory whose top-level entries to triage")
+            ap.add_argument("--min-size", type=parse_size, default=SCAN_MIN_SIZE,
+                            metavar="SIZE",
+                            help="ignore entries smaller than this (default 50M; e.g. 200M, 1G)")
+            ap.add_argument("--stale-days", type=float, default=SCAN_STALE_DAYS, metavar="D",
+                            help="skip entries modified in the last D days "
+                                 f"(default {SCAN_STALE_DAYS:g})")
+            ap.add_argument("--top", type=int, default=SCAN_TOP, metavar="N",
+                            help=f"rows per section and paths in the suggested "
+                                 f"command (default {SCAN_TOP})")
+            ap.add_argument("--min-savings", type=float, default=DEFAULT_MIN_SAVINGS,
+                            metavar="PCT",
+                            help="probe below PCT/2 routes an entry to the offload "
+                                 f"list (default {DEFAULT_MIN_SAVINGS:.0f}, same as pack)")
+            ns = ap.parse_args(rest)
+            try:
+                cmd_scan(ns.dir, min_size=ns.min_size, stale_days=ns.stale_days,
+                         top=ns.top, min_savings=ns.min_savings)
+            except SquishError as err:
+                print(f"✗ {ns.dir}: {err}", file=sys.stderr)
+                return 1
+            return 0
+        # verb == "log"
+        ap = argparse.ArgumentParser(prog="squish log")
+        ap.add_argument("-n", type=int, default=20, dest="count")
+        ns = ap.parse_args(rest)
+        cmd_log(ns.count)
+        return 0
+
+    # A guessed-but-wrong verb (`squish recover x.zst`) must not fall through
+    # to pack mode — it would try to compress the archive it was meant to
+    # extract. Only fires when the token doesn't exist on disk, so packing a
+    # dir that happens to share a synonym's name still works.
+    if argv and not argv[0].startswith("-") and not Path(argv[0]).exists():
+        guess = VERB_SYNONYMS.get(argv[0]) or next(
+            iter(difflib.get_close_matches(argv[0], sorted(VERBS), n=1, cutoff=0.6)), None
+        )
+        if guess:
+            print(
+                f"✗ unknown command '{argv[0]}' — did you mean `squish {guess}`? "
+                "(subcommands: restore, ls, cat, log, scan)",
+                file=sys.stderr,
+            )
+            return 2
+
+    ap = argparse.ArgumentParser(
+        prog="squish",
+        description="Compress dirs/files in place: verify, then delete the original.",
+        epilog=(
+            "subcommands:\n"
+            "  squish restore <archive>... [--keep]   extract in place, verify, delete the archive\n"
+            "  squish ls <archive>                    list archive contents\n"
+            "  squish cat <archive> [member]          stream one member (or the file) to stdout\n"
+            "  squish log [-n N]                      operation history with sizes/ratios\n"
+            "  squish scan <dir> [--min-size SIZE]    rank top-level entries by est. reclaim (read-only)\n"
+            "\n"
+            "a directory literally named like a subcommand needs a ./ prefix to pack"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("paths", nargs="+", help="directories and/or files to compress")
+    ap.add_argument("--keep", action="store_true", help="keep originals after archiving")
+    level = ap.add_mutually_exclusive_group()
+    level.add_argument("--level", type=int, default=DEFAULT_LEVEL, choices=range(1, 23),
+                       metavar="N", help=f"zstd level 1-22 (default {DEFAULT_LEVEL}; "
+                       "always with --long=27 long-range matching)")
+    level.add_argument("--fast", action="store_const", dest="level", const=3,
+                       help="zstd -3: ~2-3x faster than the default, somewhat worse ratio")
+    ap.add_argument("--min-savings", type=float, default=DEFAULT_MIN_SAVINGS, metavar="PCT",
+                    help=f"discard archive and keep original below this %% saved (default {DEFAULT_MIN_SAVINGS:.0f})")
+    ap.add_argument("--force", action="store_true",
+                    help="override the recent-mtime, free-space, probe, already-a-.zst, "
+                    "and xattr/hardlink file-pack guards")
+    ns = ap.parse_args(argv)
+
+    failures = 0
+    for raw in ns.paths:
+        try:
+            pack_path(raw, level=ns.level, min_savings=ns.min_savings,
+                      keep=ns.keep, force=ns.force)
+        except SquishError as err:
+            print(f"✗ {raw}: {err}", file=sys.stderr)
+            failures += 1
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

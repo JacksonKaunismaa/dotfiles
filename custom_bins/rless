@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# rless — shuffle and view any list of files in less
+# Usage:
+#   rless [file1 file2 …]
+#   rg -0il 'completion": "Yes"' | rless
+#
+# Note: if you’re using ripgrep, use -0 (null) instead of -l to get
+# null-delimited filenames: `rg -0il pattern`
+
+set -euo pipefail
+
+# collect filenames into an array, either from args or from stdin
+files=()
+if [ "$#" -gt 0 ]; then
+	  files=( "$@" )
+  elif [ ! -t 0 ]; then
+	    # read null-delimited filenames from stdin
+	      while IFS= read -r -d '' f; do
+		          files+=( "$f" )
+			    done
+		    else
+			      cat <<EOF >&2
+Usage: $(basename "$0") [file1 file2 …]
+   or: rg -0il 'pattern' | rless
+Shuffle the given files (or stdin list) and view them in less.
+EOF
+  exit 1
+fi
+
+# shuffle and hand off to less
+printf '%s\0' "${files[@]}" | shuf -z | xargs -0 less
+

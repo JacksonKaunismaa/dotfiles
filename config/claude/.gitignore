@@ -1,0 +1,9 @@
+# Sensitive credentials
+ntfy.conf
+
+# Hook logs
+hooks/*.log
+
+# Cache directories
+**/.ruff_cache/
+**/__pycache__/

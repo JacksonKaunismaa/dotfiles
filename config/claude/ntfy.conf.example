@@ -1,0 +1,8 @@
+# NTFY configuration for Claude Code notifications
+# Copy to ntfy.conf and fill in your credentials
+NTFY_USERNAME='your_username'
+NTFY_PASSWORD='your_password'
+NTFY_URL='your-ntfy-server.example.com'
+NTFY_TOPIC='your-topic'
+NTFY_TOPIC_CC='your-cc-topic'
+NTFY_TOPIC_ALERT='infra-alerts-topic'   # page-worthy failures (backups, tripwires, self-heal give-ups)

@@ -1,0 +1,226 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_AUTOBACKGROUND": "0",
+    "CLAUDE_CODE_TODO_REMINDER_MODE": "off",
+    "CLAUDE_CODE_ENABLE_NARRATION": "false"
+  },
+  "outputStyle": "",
+  "cleanupPeriodDays": 99999,
+  "model": "opus",
+  "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "high"
+    }
+  },
+  "theme": "dark",
+  "showThinkingSummaries": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/pre_session_start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/python-lint.sh deliver",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/check_loop_bypass.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/supply-chain-guard.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/prefer-ripgrep.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/python-lint.sh subagent",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/python-lint.sh parent",
+            "timeout": 90,
+            "asyncRewake": true,
+            "rewakeMessage": "Background pyright check on the file just edited found errors — fix or acknowledge, then continue:",
+            "rewakeSummary": "pyright found type errors"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/long-job-notify.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/long-job-notify.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/python-lint.sh stopcheck",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/log-error-events.sh StopFailure",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/stop-failure-retry.sh",
+            "timeout": 300,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/log-error-events.sh PermissionDenied",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/log-error-events.sh PermissionRequest",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/hooks/log-error-events.sh PostToolUseFailure",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "core@ai-safety-plugins": true,
+    "research@ai-safety-plugins": true,
+    "writing@ai-safety-plugins": true,
+    "code@ai-safety-plugins": true,
+    "workflow@ai-safety-plugins": true,
+    "viz@ai-safety-plugins": true,
+    "dev-browser@dev-browser-marketplace": true
+  },
+  "alwaysThinkingEnabled": true,
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "feedbackDrafts": "off",
+  "promptSuggestionEnabled": false,
+  "awaySummaryEnabled": false,
+  "tui": "fullscreen",
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "ScheduleWakeup"
+    ]
+  },
+  "plansDirectory": ".claude/plans",
+  "extraKnownMarketplaces": {
+    "ai-safety-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "yulonglin/ai-safety-plugins"
+      }
+    },
+    "dev-browser-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "sawyerhood/dev-browser"
+      }
+    }
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  }
+}

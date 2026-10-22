@@ -1,0 +1,11 @@
+#!/bin/bash
+#
+text=$(ps -eaxu)
+total=0
+for t in $@; do
+	amt=$(echo "$text" | grep -i "$t" | awk '{tot+=$4} END {print tot}')
+	echo "$t: $amt"
+	total=$(echo "$total + $amt" | bc)
+done
+
+echo "Total: $total"
