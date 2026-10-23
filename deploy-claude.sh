@@ -67,18 +67,6 @@ with open(new_path, "w") as f:
     f.write("\n")
 PYEOF
 fi
-# macOS: no statusLine (the statusline binary isn't built there).
-if [[ "$(uname)" == "Darwin" ]]; then
-    python3 - "$SETTINGS_NEW" <<'PYEOF' || { echo "ERROR: could not drop statusLine on macOS — aborting settings deploy"; rm "$SETTINGS_NEW"; exit 1; }
-import json, sys
-p = sys.argv[1]
-s = json.load(open(p))
-s.pop("statusLine", None)
-with open(p, "w") as f:
-    json.dump(s, f, indent=2)
-    f.write("\n")
-PYEOF
-fi
 
 # Preserve machine-local settings that installers wire into the LIVE settings.json (a local
 # proxy's ANTHROPIC_BASE_URL, an apiKeyHelper, idleCompaction, an update timer's
