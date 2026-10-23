@@ -222,5 +222,7 @@
   "attribution": {
     "commit": "",
     "pr": ""
-  }
+  },
+  "promptCacheTtl": "1h",
+  "subagentPromptCacheTtl": "1h"
 }
