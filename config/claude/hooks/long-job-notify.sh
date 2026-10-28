@@ -1,10 +1,14 @@
 #!/bin/bash
 # Notify via ntfy when Claude Code task takes > threshold minutes
-# Used by UserPromptSubmit and Stop hooks
+# Used by the Stop hook (a UserPromptSubmit registration is a no-op)
 #
-# On Stop: extracts last assistant message from transcript, summarizes
-# via Haiku API call, sends condensed notification. Falls back to
-# truncated raw text if API call fails.
+# On Stop: the turn's start and prompt come from the transcript — the start of the latest turn
+# opened by a real prompt (background-task completions and local slash commands don't restart
+# the clock). Not from UserPromptSubmit: that fires when a message is QUEUED mid-turn, carries
+# the running turn's prompt_id, and fires even for a message the user then withdraws — which
+# once paired a withdrawn line with an unrelated reply and cut 11 min off the elapsed time.
+# Extracts the last assistant message, summarizes via Haiku, sends one notification per turn.
+# Falls back to truncated raw text if the API call fails.
 
 THRESHOLD_MINS=20
 TIMESTAMP_DIR="/tmp/claude-sessions"
@@ -28,65 +32,49 @@ TIMESTAMP_FILE="$TIMESTAMP_DIR/$SESSION_ID"
 # Log every hook invocation
 echo "$(date '+%Y-%m-%d %H:%M:%S') | event=$HOOK_EVENT | session=$SESSION_ID | pid=$$ | file=$TIMESTAMP_FILE" >> "$LOG_FILE"
 
-if [ "$HOOK_EVENT" = "UserPromptSubmit" ]; then
-    NOW=$(date +%s)
-    INPUT_KEYS=$(echo "$INPUT" | jq -r 'keys | join(", ")' 2>/dev/null)
-    # Try known field names for the user's prompt
-    USER_PROMPT=$(echo "$INPUT" | jq -r '.user_prompt // .prompt // .user_message // empty')
-
-    # Skip task notifications — these are background task completions injected by
-    # Claude Code, not real user messages. They reset the timer and kill notifications.
-    case "$USER_PROMPT" in
-        '<task-notification>'*)
-            echo "  -> skipped task-notification (${#USER_PROMPT} chars)" >> "$LOG_FILE"
-            exit 0
-            ;;
-    esac
-
-    # Compute time since last UserPromptSubmit for this session
-    DELTA_S=""
-    PREV_TS=""
-    if [ -f "$TIMESTAMP_FILE" ]; then
-        PREV_TS=$(jq -r '.start_time // empty' "$TIMESTAMP_FILE" 2>/dev/null)
-        [ -n "$PREV_TS" ] && DELTA_S=$((NOW - PREV_TS))
-    fi
-
-    # Burst detection: if timestamp file was written <3s ago, dump full diagnostics
-    BURST_FLAG=""
-    if [ -n "$DELTA_S" ] && [ "$DELTA_S" -le 3 ]; then
-        BURST_FLAG=" BURST"
-        PROMPT_HEAD=$(printf '%s' "$USER_PROMPT" | head -c 300 | tr '\n' ' ')
-        ALL_FIELDS=$(echo "$INPUT" | jq -c 'to_entries | map(select(.key != "prompt" and .key != "user_prompt" and .key != "user_message" and .key != "transcript_path")) | from_entries' 2>/dev/null)
-        echo "  -> BURST delta=${DELTA_S}s prompt (${#USER_PROMPT} chars): ${PROMPT_HEAD}" >> "$LOG_FILE"
-        echo "  -> BURST fields: ${ALL_FIELDS}" >> "$LOG_FILE"
-    fi
-
-    jq -n --arg ts "$NOW" --arg prompt "$USER_PROMPT" \
-        '{"start_time": $ts, "user_prompt": $prompt}' > "$TIMESTAMP_FILE"
-    echo "  -> wrote timestamp $NOW, input_keys=[$INPUT_KEYS], prompt_len=${#USER_PROMPT}, delta=${DELTA_S:-first}s${BURST_FLAG}" >> "$LOG_FILE"
-    exit 0
-fi
-
 if [ "$HOOK_EVENT" = "Stop" ]; then
-    if [ ! -f "$TIMESTAMP_FILE" ]; then
-        echo "  -> no timestamp file found, exiting" >> "$LOG_FILE"
+    TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+    if [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
+        echo "  -> no transcript (${TRANSCRIPT:-unset}), exiting" >> "$LOG_FILE"
         exit 0
     fi
 
-    SESSION_DATA=$(cat "$TIMESTAMP_FILE")
-    START_TIME=$(echo "$SESSION_DATA" | jq -r '.start_time // empty' 2>/dev/null)
-    # Backwards compat: old format was just a bare timestamp
-    [ -z "$START_TIME" ] && START_TIME="$SESSION_DATA"
-    [ -z "$START_TIME" ] && exit 0
+    # Every transcript entry of a turn carries that turn's promptId; a turn's first user entry is
+    # the message that opened it. From the newest 5000 promptId lines, take the first entry of each
+    # consecutive promptId run, drop runs opened by a background-task completion or a local slash
+    # command; the last one left is the turn we're timing. A queued message delivered mid-turn
+    # shares the turn's promptId; a withdrawn one never reaches the transcript.
+    # grep/tail/jq only: this also runs on macOS (no tac, no GNU date).
+    TURN=$(grep -F '"promptId":"' "$TRANSCRIPT" | tail -n 5000 \
+        | jq -c 'select(.type == "user" and .promptId != null)
+                 | {id: .promptId, ts: (.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601),
+                    text: (.message.content | if type == "string" then .
+                           else ([.[]? | select(.type == "text") | .text] | join("\n")) end)}' 2>/dev/null \
+        | jq -cs 'reduce .[] as $e ([]; if length > 0 and .[-1].id == $e.id then . else . + [$e] end)
+                  | map(select(.text | (startswith("<task-notification>") or startswith("<local-command")
+                                        or startswith("<command-name>")) | not))
+                  | last // empty')
+    if [ -z "$TURN" ]; then
+        echo "  -> no prompt-opened turn in transcript, exiting" >> "$LOG_FILE"
+        exit 0
+    fi
+    TURN_ID=$(echo "$TURN" | jq -r '.id')
+    START_TIME=$(echo "$TURN" | jq -r '.ts')
+    USER_PROMPT=$(echo "$TURN" | jq -r '.text')
 
-    USER_PROMPT=$(echo "$SESSION_DATA" | jq -r '.user_prompt // empty' 2>/dev/null)
+    # One notification per turn: the state file holds the turn already notified for.
+    if [ "$(jq -r '.notified_turn // empty' "$TIMESTAMP_FILE" 2>/dev/null)" = "$TURN_ID" ]; then
+        echo "  -> already notified for turn $TURN_ID, exiting" >> "$LOG_FILE"
+        exit 0
+    fi
 
     NOW=$(date +%s)
     ELAPSED_SECS=$((NOW - START_TIME))
     ELAPSED_MINS=$((ELAPSED_SECS / 60))
     INPUT_KEYS=$(echo "$INPUT" | jq -r 'keys | join(", ")' 2>/dev/null)
     STOP_REASON=$(echo "$INPUT" | jq -r '.reason // empty')
-    echo "  -> read timestamp $START_TIME, now=$NOW, elapsed=${ELAPSED_MINS}m (${ELAPSED_SECS}s), reason=$STOP_REASON, input_keys=[$INPUT_KEYS]" >> "$LOG_FILE"
+    echo "  -> turn $TURN_ID started $START_TIME, now=$NOW, elapsed=${ELAPSED_MINS}m (${ELAPSED_SECS}s), reason=$STOP_REASON, input_keys=[$INPUT_KEYS]" >> "$LOG_FILE"
+    echo "  -> turn prompt (${#USER_PROMPT} chars): ${USER_PROMPT:0:80}" >> "$LOG_FILE"
 
     # Log near-misses: 5-8 minutes = likely would have fired without timer reset
     if [ "$ELAPSED_MINS" -ge 5 ] && [ "$ELAPSED_MINS" -lt "$THRESHOLD_MINS" ]; then
@@ -112,7 +100,6 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
         else
             echo "  -> last_assistant_message empty, falling back to transcript" >> "$LOG_FILE"
             # Fall back to transcript parsing — search recent messages for text
-            TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
             if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
                 TRANSCRIPT_LINES=$(wc -l < "$TRANSCRIPT")
                 LAST_TYPE=$(tail -1 "$TRANSCRIPT" | jq -r '.type // empty' 2>/dev/null)
@@ -147,7 +134,7 @@ if [ "$HOOK_EVENT" = "Stop" ]; then
         fi
 
         TITLE="CC Done (${ELAPSED_MINS}m) — ${PROJECT}"
-        rm -f "$TIMESTAMP_FILE"
+        jq -n --arg t "$TURN_ID" '{"notified_turn": $t}' > "$TIMESTAMP_FILE"
 
         # Background the entire summarize+send flow so the hook exits instantly.
         # Haiku summary with fallback to raw text — only one notification sent.
